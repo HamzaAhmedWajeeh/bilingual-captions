@@ -315,6 +315,19 @@ def test_no_brand_image_is_served_from_the_committed_directory():
             f"{name} is served from web/ - brand images go in brand/")
 
 
+#: The one image this repository carries: a recording of `/screen` on the
+#: neutral theme, replaying a synthetic capture written for it. It is the
+#: README's demo and it is nobody's artwork and nobody's speech.
+#:
+#: Named here rather than left out of the extension list below, so that
+#: committing brand artwork *as a .gif* fails like any other image instead
+#: of slipping through a gap.
+ALLOWED_IMAGES = {"docs/demo.gif"}
+
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".avif", ".svg", ".webp", ".gif",
+                  ".bmp", ".tiff", ".ico", ".heic")
+
+
 @needs_git
 def test_no_image_file_is_committed_anywhere():
     """The whole point of the split. Checked against git rather than the
@@ -324,10 +337,23 @@ def test_no_image_file_is_committed_anywhere():
         capture_output=True, text=True, check=False)
     if result.returncode != 0:
         pytest.skip("not a git checkout")
-    images = [line for line in result.stdout.split("\n")
-              if line.strip().lower().endswith(
-                  (".png", ".jpg", ".jpeg", ".avif", ".svg", ".webp"))]
+    images = [line.strip() for line in result.stdout.split("\n")
+              if line.strip().lower().endswith(IMAGE_SUFFIXES)
+              and line.strip() not in ALLOWED_IMAGES]
     assert not images, f"image files are committed: {images}"
+
+
+def test_the_one_allowed_image_is_the_demo_and_it_is_small():
+    """A README GIF is easy to let grow. Over a few megabytes it is a tax on
+    every clone, and GitHub stops previewing it."""
+    demo = ROOT / "docs" / "demo.gif"
+    if not demo.is_file():
+        pytest.skip("docs/demo.gif has not been recorded")
+    megabytes = demo.stat().st_size / (1024 * 1024)
+    assert megabytes < 5, (
+        f"docs/demo.gif is {megabytes:.1f} MB; keep it under 5 MB by "
+        f"dropping the frame rate or the width in tools, not by trimming "
+        f"the direction change out of it")
 
 
 @pytest.mark.parametrize("name", sorted(brand_mod.SLOTS))

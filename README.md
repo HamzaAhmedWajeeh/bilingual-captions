@@ -10,18 +10,10 @@ and half reads the other, and speakers switch mid-sentence. The screen
 shows the *translated* side only, in the order it was spoken, so the room
 always reads the half it could not follow.
 
-<!-- DEMO GIF GOES HERE.
+![The projector view: the waiting screen, then Arabic speech captioned in English, then a switch to English captioned in Arabic](docs/demo.gif)
 
-     Record about 15 seconds of /screen during a bilingual exchange, showing
-     a direction change, save it as docs/demo.gif, then replace this comment
-     with:
-
-         ![Two-way captions on a venue screen](docs/demo.gif)
-
-     Left as a comment rather than a live link so the README does not show a
-     broken image until the file exists. -->
-
-*A demo recording goes here.*
+<sub>Recorded from `/screen` on the neutral theme, replaying a synthetic
+capture. Every word in it was invented for the recording.</sub>
 
 ## What it is
 
