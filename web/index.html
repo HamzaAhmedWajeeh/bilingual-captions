@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex">
+  <!-- **Never let the browser translate this page.**
+       Chrome and Edge translate a page whose detected language is not the
+       reader's, and an operator who does not read Arabic may have "always
+       translate Arabic" turned on. On a caption screen that reads exactly
+       like a caption bug: once a stretch of Arabic fills the pane the
+       browser decides the page is Arabic and translates it *back* into
+       English in place, so the room is shown the words it has just heard,
+       minutes after the talk switched language. It also rewrites the text
+       nodes this page is still updating, wrapping them in `<font>`.
+
+       `translate="no"` on the root element is the one that stops it; the
+       meta is the older form that some builds still honour, and
+       `class="notranslate"` on the caption containers is belt and braces
+       for the part that must never be touched. The per-paragraph `lang`
+       and `dir` stay exactly as they are - they are what makes the type
+       and the direction right, and they are also what the browser sniffs,
+       which is why saying "no" has to be explicit. -->
+  <meta name="google" content="notranslate">
+  <title>Live Captions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- `display=swap`, so a slow venue network delays the typefaces but never
+       the captions: the system fallback paints immediately. Both families are
+       asked for in one request, so the second one costs no extra connection,
+       and Outfit is used for chrome only - the header and the buttons - so a
+       download that never finishes cannot touch a caption. -->
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500&family=Outfit:wght@500;600&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/brand.css">
+  <link rel="icon" href="/brand/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/brand/apple-touch-icon-180.png">
+</head>
+<body data-page="audience">
+  <header>
+    <div class="title-row">
+      <!-- The mark, the name, and one sparkle. The tile is the only place the
+           logo appears on this page; everything else is type. -->
+      <span class="brandline">
+        <span class="brandmark">
+          <img class="brandmark" src="/brand/mark.png" alt=""
+               width="256" height="256">
+        </span>
+        <h1>Live Captions<svg class="sparkle" viewBox="0 0 16 16"
+            aria-hidden="true" focusable="false"><path fill="currentColor"
+            d="M8 0c.5 4.2 3.3 7 7.5 7.5v1C11.3 9 8.5 11.8 8 16h-1C6.5 11.8 3.7 9-.5 8.5v-1C3.7 7 6.5 4.2 7 0z"
+            /></svg></h1>
+      </span>
+      <span id="state" class="connecting">connecting</span>
+    </div>
+    <p class="disclaimer" id="disclaimer">Live auto-translation. May contain mistakes.</p>
+    <div class="controls">
+      <button type="button" id="view-en" data-view="en" aria-pressed="false">English</button>
+      <button type="button" id="view-ar" data-view="ar" aria-pressed="false" lang="ar">العربية</button>
+      <button type="button" id="view-both" data-view="both" aria-pressed="false">Both</button>
+      <!-- Translation only: Arabic speech in English, English speech in
+           Arabic, never the original. Not the default here - a phone belongs
+           to one person, who has a language. -->
+      <button type="button" id="view-auto" data-view="auto" aria-pressed="false">Auto</button>
+      <span class="sizer">
+        <button type="button" id="smaller" aria-label="Smaller text">A&minus;</button>
+        <button type="button" id="bigger" aria-label="Larger text">A+</button>
+      </span>
+    </div>
+  </header>
+
+  <main id="streams" class="notranslate">
+    <!-- One scroll container per language, each wrapped in its own column so
+         the column can hold a "Jump to live" button that does not scroll with
+         the captions. Both columns are present in the DOM at all times and
+         only hidden, so switching view keeps each one's scroll position and no
+         caption has to be re-applied.
+
+         The button belongs to the column, not to the page: in "Both" the
+         reader can scroll one language back to re-read a line while the other
+         keeps following the talk, and only the column that stopped following
+         offers to catch up. -->
+    <div class="column" id="column-en" hidden>
+      <section class="stream notranslate" id="stream-en" dir="ltr" lang="en"></section>
+      <button type="button" class="jump" id="jump-en" dir="ltr" hidden>
+        Jump to live
+      </button>
+    </div>
+    <div class="column" id="column-ar" hidden>
+      <section class="stream notranslate" id="stream-ar" dir="rtl" lang="ar"></section>
+      <button type="button" class="jump" id="jump-ar" dir="rtl" lang="ar" hidden>
+        انتقل إلى المباشر
+      </button>
+    </div>
+    <!-- The translation-only column. One column, but the same scroll
+         container, auto-follow and per-column button as the other two: it is
+         a column like any other, and the work in 3625c57 applies to it
+         unchanged. Its paragraphs carry their own dir, so the container
+         declares none. -->
+    <div class="column" id="column-auto" hidden>
+      <section class="stream auto notranslate" id="stream-auto"></section>
+      <button type="button" class="jump" id="jump-auto" dir="ltr" hidden>
+        Jump to live
+      </button>
+    </div>
+  </main>
+
+  <script src="/static/auto.js"></script>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Copy to config/brand.json and edit. The real file is gitignored: it is",
+    "your event's identity, not this project's, and it must not end up in a",
+    "fork's history. Everything here is optional - delete any key and the",
+    "neutral default in app/brand.py applies.",
+    "",
+    "The values below ARE the neutral default theme, written out so you can",
+    "see the whole shape at once. Copying this file unchanged is a no-op.",
+    "",
+    "Images are not configured here. Drop them into brand/ under these exact",
+    "names and they are picked up and served automatically:",
+    "",
+    "  brand/mark.png                   the square mark, in both page headers",
+    "  brand/wordmark-en.png            the Latin wordmark, on the title card",
+    "  brand/wordmark-ar.png            the Arabic wordmark, beside it",
+    "  brand/favicon-32.png             the browser tab",
+    "  brand/apple-touch-icon-180.png   a phone home screen",
+    "",
+    "Any slot you leave empty is hidden rather than drawn broken. With no",
+    "wordmark artwork at all, the title card sets event_name in type instead.",
+    "",
+    "After adding or replacing wordmark artwork, run:",
+    "  uv run --with pillow python tools/brand_assets.py",
+    "which measures the files and writes web/brand-sizes.css, so the title",
+    "card is sized from your artwork rather than from a number in the",
+    "stylesheet. It is optional - without it the layout uses sane defaults."
+  ],
+
+  "event_name": "",
+
+  "accent": "#4DA3FF",
+  "accent_ink": "#0B0B0D",
+  "background": "#0B0B0D",
+
+  "event_url": "",
+
+  "waiting": {
+    "eyebrow": "LIVE CAPTIONS",
+    "headline": "Captions start shortly.",
+    "subline": "Arabic and English captions, side by side,\nas the talk happens.",
+    "pill": "Scan to join",
+    "cta": "Scan to open the link",
+    "note": "Opens the event link"
+  }
+}

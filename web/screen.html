@@ -1,0 +1,257 @@
+<!doctype html>
+<!-- `class="screen"` so the brand black reaches the root element too, not
+     only `body`. A projector that overscrolls, or a browser painting
+     outside the body box, must not flash a different black. -->
+<html lang="en" class="screen" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex">
+  <!-- **Never let the browser translate this page.**
+       Chrome and Edge translate a page whose detected language is not the
+       reader's, and an operator who does not read Arabic may have "always
+       translate Arabic" turned on. On a caption screen that reads exactly
+       like a caption bug: once a stretch of Arabic fills the pane the
+       browser decides the page is Arabic and translates it *back* into
+       English in place, so the room is shown the words it has just heard,
+       minutes after the talk switched language. It also rewrites the text
+       nodes this page is still updating, wrapping them in `<font>`.
+
+       `translate="no"` on the root element is the one that stops it; the
+       meta is the older form that some builds still honour, and
+       `class="notranslate"` on the caption containers is belt and braces
+       for the part that must never be touched. The per-paragraph `lang`
+       and `dir` stay exactly as they are - they are what makes the type
+       and the direction right, and they are also what the browser sniffs,
+       which is why saying "no" has to be explicit. -->
+  <meta name="google" content="notranslate">
+  <title>Live Captions: screen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Three families, one request, `display=swap`, and a system stack behind
+       each of them: a venue with no internet loses the typefaces and keeps
+       every word. Inter Tight is the waiting screen's display face - tight,
+       heavy and close to the display face - and it is used nowhere a
+       caption can see it. -->
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500&family=Inter+Tight:wght@500;600;800&family=Outfit:wght@500;600&display=swap">
+  <!-- Generated from whatever wordmarks are in `brand/` by
+       `tools/brand_assets.py`: their native pixel sizes, which `style.css`
+       sizes the lockup, the corner mark and the footer strip from. Loaded
+       before it, so the variables exist by the time the rules that read them
+       are parsed. Optional - `style.css` declares a default for every one of
+       them, so a clone with no artwork still lays out correctly and this
+       link simply 404s. -->
+  <link rel="stylesheet" href="/static/brand-sizes.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Last, so it wins: the theme's colours, and the rules that hide the
+       image slots this install has no artwork for. Generated per request by
+       `app/brand.py`. -->
+  <link rel="stylesheet" href="/brand.css">
+  <link rel="icon" href="/brand/favicon-32.png" sizes="32x32">
+</head>
+<!-- Pure black and no controls: this view is meant to be keyed or overlaid
+     under the speaker's slides, so anything but caption text is in the way.
+
+     It defaults to the translation-only `auto` stream and takes its view and
+     text size from the operator's "Main screen" control, pushed
+     down the socket this page already has. `?lang=auto|en|ar|both` and
+     `?size=s|m|l|xl` override that, for testing without the operator page. -->
+<body class="screen" data-page="screen">
+  <!-- The two soft glows behind the caption view - cool from the upper
+       left, warm from the lower right, both taken from the theme - so
+       the live screen carries the
+       same light the waiting-screen poster does and the room does not
+       watch the branding switch off the moment the talk starts.
+
+       First child, fixed and behind everything: it is a wash of light, not
+       a box, and nothing on this page may be pushed around by it. It is
+       much fainter than the poster's, because here there are words on top
+       of it - see the contrast floor in `style.css`.
+
+       The operator can turn it off ("Background glow"), and `?glow=0`
+       pins it off for a check. Off is flat `--bg-brand` everywhere, which
+       is the surface the captions were designed against. -->
+  <div class="screenglow" id="screenglow" aria-hidden="true"></div>
+
+  <main id="streams" class="notranslate">
+    <!-- The translation-only view. Bottom-anchored: the newest line sits at
+         the bottom and older text moves up and out, so nothing above it ever
+         reflows. -->
+    <section class="stream auto notranslate" id="screen-auto" hidden></section>
+    <!-- The single-language and side-by-side views, for `?lang=`. -->
+    <section class="stream notranslate" id="screen-en" dir="ltr" lang="en" hidden></section>
+    <section class="stream notranslate" id="screen-ar" dir="rtl" lang="ar" hidden></section>
+  </main>
+
+  <!-- Three soft dots while the room is being heard and no translation has
+       landed yet. No spinner, no text. -->
+  <div class="listening" id="listening" hidden aria-hidden="true">
+    <i></i><i></i><i></i>
+  </div>
+
+  <!-- Shown whenever there are no captions to show: before the talk, between
+       the first word and the first translation, and after Stop. It covers the
+       text rather than clearing it, so the last line is still there when a
+       session resumes. Fades, because it appears and disappears in front of a
+       room. -->
+  <div class="titlecard" id="titlecard">
+    <!-- The official lockup, both scripts, Arabic above English - the order
+         the organizer's own combined mark uses. Two files rather than one
+         image so each can be sized against its own artwork, and so the
+         Arabic mark is a real alternative for a screen reader instead of a
+         transliteration. -->
+    <!-- No width/height attributes on any wordmark in this page. They would
+         be a third copy of the artwork's dimensions, stale the moment a
+         bigger master lands; the CSS sets `aspect-ratio` from the generated
+         variables instead, which reserves the same layout space and stays
+         true to whatever file is actually there.
+
+         `dir="ltr"` on the row is load-bearing, not decoration. This page
+         renders Arabic constantly and the card sits inside it; without a
+         forced direction an RTL context would reverse the flex order and
+         put the Arabic mark on the left, which is not the lockup. -->
+    <span class="titlecard-lockup" dir="ltr">
+      <img class="titlecard-wordmark en" src="/brand/wordmark-en.png"
+           alt="">
+      <img class="titlecard-wordmark ar" src="/brand/wordmark-ar.png"
+           alt="">
+      <!-- Shown by `/brand.css` only when `brand/` has no wordmark artwork,
+           and filled in by `brand.js` from `event_name`. One or the other,
+           never both. -->
+      <span class="brand-eventname" lang="en" dir="ltr"></span>
+    </span>
+    <p class="titlecard-lead">
+      <span lang="en" dir="ltr">Live translation</span>
+      <svg class="sparkle" viewBox="0 0 16 16" aria-hidden="true"
+           focusable="false"><path fill="currentColor"
+        d="M8 0c.5 4.2 3.3 7 7.5 7.5v1C11.3 9 8.5 11.8 8 16h-1C6.5 11.8 3.7 9-.5 8.5v-1C3.7 7 6.5 4.2 7 0z"
+        /></svg>
+      <span lang="ar" dir="rtl">ترجمة فورية</span>
+    </p>
+    <p class="titlecard-pair" dir="ltr">English &#8644; <span lang="ar">العربية</span></p>
+    <!-- Off unless the operator turns it on and SCREEN_CREDIT is set. -->
+    <p class="titlecard-credit" id="titlecard-credit" hidden></p>
+  </div>
+
+  <!-- The waiting screen: what the room looks at before Start and after
+       Stop. It is the organizer's poster, not a caption view, so it is the
+       one surface on this page that is allowed colour - two soft glows and
+       a white card - and it covers the captions rather than clearing them,
+       exactly as the title card does.
+
+       Live-but-silent is deliberately *not* this: the gap between the first
+       word and its translation keeps the small title card, because a room
+       that has just heard Start should not be shown a "join us" poster for
+       the three seconds the engine takes to catch up.
+
+       Every word in here that the operator can change is filled in by
+       `screen.js` from the settings that ride on the socket. The fixed ones
+       below are the ones that describe the mechanism rather than the
+       event. -->
+  <div class="waitscreen" id="waitscreen">
+    <!-- The two glows, in one element behind everything. Decoration, and
+         announced as such: there is nothing here to read. -->
+    <div class="wait-glow" aria-hidden="true"></div>
+
+    <!-- The lockup, then the hairline. Same markup and the same rules as the
+         title card's - the direction is forced, the row cannot wrap, and the
+         Arabic mark takes its width and its nudge from the artwork - with
+         only the one knob, `--title-lockup`, turned down for a header. -->
+    <header class="wait-head">
+      <span class="titlecard-lockup" dir="ltr">
+        <img class="titlecard-wordmark en" src="/brand/wordmark-en.png"
+             alt="">
+        <img class="titlecard-wordmark ar" src="/brand/wordmark-ar.png"
+             alt="">
+        <span class="brand-eventname" lang="en" dir="ltr"></span>
+      </span>
+    </header>
+
+    <div class="wait-body">
+      <section class="wait-copy">
+        <p class="wait-eyebrow" id="wait-eyebrow"></p>
+        <!-- The last word is lifted into the accent by `screen.js`, which
+             is why this is filled in as nodes rather than as text. -->
+        <h1 class="wait-headline" id="wait-headline"></h1>
+        <p class="wait-sub" id="wait-sub"></p>
+      </section>
+
+      <!-- Always here. The server picks the code from the organizer's own
+           file, the operator's link, or a default link, so the card is part
+           of the composition rather than something that can disappear and
+           leave the poster a different shape. -->
+      <aside class="wait-join" id="wait-join">
+        <div class="wait-card">
+          <!-- The three lines around the card are the operator's words
+               too, filled in by `screen.js`. The pill is set in caps by the
+               stylesheet, so what the operator types is sentence case. -->
+          <span class="wait-pill" id="wait-pill"></span>
+          <!-- The inner frame: the thin outlined square the code sits in,
+               which is what gives the card its double edge. It is a wrapper
+               rather than a border on the image itself, so the white margin
+               between the frame and the code stays white at any size. -->
+          <div class="wait-frame">
+            <!-- `src` is set by `screen.js`, with a fingerprint of whichever
+                 source is live on it, so changing the code changes the URL.
+                 Never the link itself - this page is not told it. -->
+            <img class="wait-qr" id="wait-qr"
+                 alt="QR code for the group invite">
+          </div>
+        </div>
+        <p class="wait-cta" id="wait-cta"></p>
+        <!-- The dot is markup and stays whatever the words are. -->
+        <p class="wait-note">
+          <i class="wait-dot" aria-hidden="true"></i><span
+            id="wait-note-text"></span>
+        </p>
+      </aside>
+    </div>
+  </div>
+
+  <!-- The disclaimer the room is owed, in a band of its own along the bottom
+       so it can never sit on a caption. Dim, small, still.
+
+       **No wordmark here** (2026-10-20): the branding is the corner
+       lockup and the title card, and a third mark in the one band that
+       exists to carry a disclaimer was one too many. Text only, centred. -->
+  <div class="screenfooter" id="screenfooter" hidden>
+    <span lang="en" dir="ltr">Live AI translation &middot; may contain mistakes</span>
+    <span class="screenfooter-sep" aria-hidden="true">&#183;</span>
+    <span lang="ar" dir="rtl">ترجمة آلية فورية &middot; قد تحتوي على أخطاء</span>
+  </div>
+
+  <!-- Off by default, and **both** marks or neither: Latin at the left
+       edge and Arabic at the right, the way they sit at the ends of the
+       waiting screen's rule and the way the default theme sets them out.
+       One switch, because a projector showing half a bilingual lockup
+       looks like a page that failed to load rather than a choice.
+
+       It sits in the corner the captions grow away from - they are
+       anchored to the bottom - and the pane reserves a band for it, so it
+       can never end up over a word. The band clears the Arabic mark, which
+       is the taller of the two.
+
+       Same markup as the title card and the poster's header, and for the
+       same reason: `dir="ltr"` so an RTL context cannot swap the ends, no
+       width/height attributes so the artwork's own size is the only copy
+       of it, and the shared lockup rules carry the baseline nudge. `alt`
+       is empty on both - this is a repeat of branding the room has
+       already been shown, not information. -->
+  <span class="screenmark" id="screenmark" hidden>
+    <span class="titlecard-lockup" dir="ltr">
+      <img class="titlecard-wordmark en" src="/brand/wordmark-en.png" alt="">
+      <img class="titlecard-wordmark ar" src="/brand/wordmark-ar.png" alt="">
+    </span>
+  </span>
+
+  <!-- The only thing a reconnect is allowed to put on a projector. -->
+  <span class="linkdot" id="linkdot" hidden title="reconnecting"></span>
+
+  <script src="/static/brand.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/auto.js"></script>
+  <script src="/static/screen.js"></script>
+</body>
+</html>

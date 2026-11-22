@@ -1,0 +1,94 @@
+# --- secrets ---------------------------------------------------------------
+
+# The Soniox API key and the admin token. .env.example is the committed
+# shape. If ADMIN_TOKEN is unset the server generates one and appends it
+# here on first run, so this file may appear without you creating it.
+.env
+
+# --- your branding ---------------------------------------------------------
+
+# Your event's identity, not this project's. Kept out so a fork never
+# inherits somebody else's name, colours or logos, and so this repository
+# carries none. config/brand.example.json is the committed shape.
+config/brand.json
+
+# Logos and wordmarks, dropped in by hand under the slot names in
+# config/brand.example.json. Served through /brand/{name}, which resolves
+# against a fixed list - so whatever else lands in here is unreachable over
+# HTTP rather than merely unlinked.
+brand/
+
+# Generated from the wordmarks above by tools/brand_assets.py: their native
+# pixel sizes as CSS variables. It describes your artwork, so it is yours
+# rather than ours. web/style.css declares a default for every variable it
+# sets, so a clone without it still lays out correctly.
+web/brand-sizes.css
+
+# --- what the operator types ----------------------------------------------
+
+# This talk's details: speaker names, the title, your own notes. Private,
+# and edited on the day from /admin, sometimes mid-session.
+# config/session.example.yaml is the committed shape.
+config/session.yaml
+
+# What the operator last chose for the main screen: the credit line they
+# typed, the waiting screen's words, and the join link. Written by /admin.
+# The link is an open door for anyone holding it.
+config/screen.yaml
+
+# Your own QR artwork, dropped in by hand and served as-is. It encodes the
+# join link, so it is that link in another form.
+config/qr.svg
+config/qr.png
+
+# The input device the last live session opened, remembered so /admin can
+# preselect it. It names this laptop's audio hardware, which belongs to the
+# machine and not to the project, and a committed value would preselect a
+# device that does not exist on anyone else's.
+config/mic.yaml
+
+# --- what a session records ------------------------------------------------
+
+# Response logs, event logs, the spend ledger and the screen audit. A
+# response log holds speech: it is a verbatim record of whatever was said.
+logs/
+
+# Saved audio, if the operator ticked for it. Off by default, because the
+# room has not consented to being recorded.
+recordings/
+clips/
+eval/out/
+
+# A session's readable transcript: three markdown files and a stats sheet
+# per talk. A verbatim record of a room.
+transcripts/
+
+# Captures: saved engine responses, replayed by the tests and the tools.
+# Same judgment as logs/ above - a capture is a transcript. The tests that
+# read one skip cleanly when it is absent; see tests/captures.py. Committing
+# one is a deliberate act (git add -f) and means publishing whatever was
+# said in it.
+tests/fixtures/*.jsonl
+
+# Screenshots and video captured from a real run show verbatim speech on
+# screen. The screenshot tools write generated sample text instead; anything
+# taken from an actual session goes here.
+docs/screens/local/
+docs/demo-source/
+
+# --- python ----------------------------------------------------------------
+
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+
+# --- editors and OS --------------------------------------------------------
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

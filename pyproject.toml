@@ -1,0 +1,30 @@
+[project]
+name = "bilingual-captions"
+version = "0.1.0"
+description = "Two-way live Arabic/English captions for a venue screen"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "websockets>=13",
+    "sounddevice>=0.5",
+    "numpy>=2.1",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    # The waiting screen's QR code. Pure Python, no dependencies of its
+    # own, and it never touches the network: one URL in, one SVG out.
+    "segno>=1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.uv]
+package = false

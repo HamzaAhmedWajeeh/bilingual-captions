@@ -1,0 +1,57 @@
+# Vocabulary shared across every session. Fed into the Soniox `context`
+# object on each connection. Committed, because it is public technical
+# vocabulary rather than anything about a particular talk - per-talk terms go
+# in `config/session.yaml`, which is gitignored.
+#
+# The two lists do different jobs:
+#
+# `terms` biases *recognition*: it helps the engine hear the word at all.
+# `translation_terms` controls what happens to a word once it crosses into
+# the other language. A term that is not in `terms` cannot be preserved by
+# `translation_terms`, because it was never recognised in the first place.
+#
+# Mapping a term to itself is how a word is kept in English inside the Arabic
+# captions. Without it, an English technical term is translated into its
+# Arabic equivalent, which for settled words is what you want and for jargon
+# usually is not.
+#
+# Two caveats worth knowing before you add entries:
+#
+# - Ordinary English words with a settled Arabic equivalent tend to ignore
+#   `translation_terms` and come back translated anyway. Do not count on
+#   pinning those.
+# - A word the audience reads more easily in Arabic is better left out of
+#   `translation_terms` and kept in `terms` only, so it is still recognised
+#   but still translated.
+#
+# Add your own event's names, products and people to `config/session.yaml`
+# rather than here.
+terms:
+  - RAG
+  - MCP
+  - LLM
+  - LLMs
+  - fine-tuning
+  - agent
+  - agents
+  - agentic
+  - embeddings
+  - vector database
+  - transformers
+  - transformer
+  - ChatGPT
+  - AI
+
+translation_terms:
+  # Keep the English word in the Arabic captions.
+  - {source: transformers, target: transformers}
+  - {source: transformer, target: transformer}
+  - {source: LLM, target: LLM}
+  - {source: LLMs, target: LLMs}
+  - {source: RAG, target: RAG}
+  - {source: MCP, target: MCP}
+  - {source: agent, target: agent}
+  - {source: agents, target: agents}
+  - {source: fine-tuning, target: fine-tuning}
+  - {source: embeddings, target: embeddings}
+  - {source: ChatGPT, target: ChatGPT}

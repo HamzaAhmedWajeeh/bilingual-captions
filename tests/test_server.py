@@ -1,0 +1,642 @@
+"""Phase 3: routes, the admin gate, and the replay session. Offline.
+
+Route handlers are called as the coroutines they are, rather than through
+`fastapi.testclient`: `TestClient` needs `httpx`, which is not in the design brief
+section 2's dependency list, and section 9 says to ask before adding one. The
+handlers are thin enough that calling them directly tests the same logic -
+and the socket endpoint is better tested with a fake WebSocket anyway, since
+that is the only way to feed it the messages a hostile client would send.
+
+The security checks here are the security rules in executable form: the key
+never reaches a served file, the admin page is unreachable without its token,
+an unconfigured token denies rather than allows, and no request can name a
+file outside `CAPTURE_DIRS`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import app.settings  # noqa: E402
+from app import main as server  # noqa: E402
+from app import usage  # noqa: E402
+from app.main import (  # noqa: E402
+    ASSETS,
+    CaptionSession,
+    admin,
+    admin_start,
+    admin_status,
+    admin_stop,
+    asset,
+    available_captures,
+    healthz,
+    index,
+    require_admin,
+    resolve_capture,
+    screen,
+    viewer_socket,
+)
+from app.settings import WEB_DIR, settings  # noqa: E402
+from captures import needs_captures  # noqa: E402
+
+TOKEN = "s3cret-operator-token"
+
+#: Every file the server will hand to a browser: the allowlisted assets plus
+#: the three pages. Anything added here must stay free of credentials.
+SERVED = sorted(set(ASSETS) | {"index.html", "screen.html", "admin.html"})
+
+#: Files in `ASSETS` that are *generated* and therefore absent from a
+#: fresh clone. `brand-sizes.css` is written by `tools/brand_assets.py`
+#: from whatever wordmarks are in `brand/`, and it is gitignored because
+#: it describes somebody's artwork. The route still has to know about it
+#: - that is what makes it servable once it exists - so it stays in the
+#: allowlist and the tests below treat a missing one as normal.
+GENERATED = {"brand-sizes.css"}
+PRESENT = [name for name in SERVED if name not in GENERATED]
+
+
+# ---------------------------------------------------------------------------
+# Doubles
+# ---------------------------------------------------------------------------
+
+
+class FakeWebSocket:
+    """Starlette's WebSocket, reduced to what the endpoint touches.
+
+    `receive` returns raw ASGI event dicts, which is what lets a test send a
+    binary frame or an oversized one - the two shapes a read-only endpoint
+    has to shrug off rather than crash on.
+    """
+
+    def __init__(self, incoming: list[dict] | None = None) -> None:
+        self.incoming = list(incoming or [])
+        self.accepted = False
+        self.sent: list[str] = []
+        self.closed: int | None = None
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def receive(self) -> dict:
+        if self.incoming:
+            return self.incoming.pop(0)
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send_text(self, text: str) -> None:
+        self.sent.append(text)
+
+    async def close(self, code: int = 1000) -> None:
+        self.closed = code
+
+
+@pytest.fixture(autouse=True)
+def quarantine_usage_log(tmp_path, monkeypatch):
+    """Point the spend ledger at a tmp directory for every test here.
+
+    Phase 4 made every run append to `logs/usage.jsonl`, which means a test
+    suite that starts a few dozen replays writes a few dozen lines into the
+    operator's real ledger. The ledger is the only record of what the $10 was
+    spent on; a run nobody performed must never appear on it.
+    """
+    monkeypatch.setattr(usage, "LOG_DIR", tmp_path / "logs")
+
+
+@pytest.fixture(autouse=True)
+async def fresh_session(monkeypatch):
+    """A clean `CaptionSession` per test, never the imported module global."""
+    made = CaptionSession()
+    monkeypatch.setattr(server, "session", made)
+    yield made
+    await made.shutdown()
+
+
+@pytest.fixture
+def admin_token(monkeypatch):
+    monkeypatch.setattr(settings, "admin_token", TOKEN)
+    return TOKEN
+
+
+async def drain(session, limit: int = 20_000) -> None:
+    """Let an unpaced replay run to completion."""
+    for _ in range(limit):
+        if not session.running:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("replay did not finish")
+
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+
+
+async def test_healthz_is_ok():
+    response = await healthz()
+    assert json.loads(response.body) == {"ok": True}
+
+
+@pytest.mark.parametrize(
+    "handler,filename",
+    [(index, "index.html"), (screen, "screen.html")],
+)
+async def test_public_pages_are_served(handler, filename):
+    response = await handler()
+    assert Path(response.path).name == filename
+    # A phone that reloads after a mid-talk fix must not get a cached page.
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_every_served_page_exists():
+    for name in PRESENT:
+        assert (WEB_DIR / name).is_file(), f"{name} is routed but missing"
+
+
+async def test_a_generated_asset_that_is_absent_is_a_404_not_a_crash():
+    """A clone that has never run `tools/brand_assets.py` asks for
+    `brand-sizes.css` on every page load. That is a normal state, and it
+    must not surface as a 500 - the page has defaults for everything the
+    file would have set."""
+    for name in GENERATED:
+        if (WEB_DIR / name).is_file():
+            continue
+        with pytest.raises(HTTPException) as raised:
+            await asset(name)
+        assert raised.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The admin gate (the security rules)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("supplied", [None, "", "wrong", TOKEN + "x", TOKEN[:-1]])
+async def test_admin_refuses_a_bad_token(admin_token, supplied):
+    with pytest.raises(HTTPException) as raised:
+        require_admin(supplied)
+    assert raised.value.status_code == 401
+
+
+async def test_admin_accepts_the_configured_token(admin_token):
+    require_admin(TOKEN)
+    response = await admin(token=TOKEN)
+    assert Path(response.path).name == "admin.html"
+
+
+async def test_an_unset_admin_token_denies_rather_than_allows(monkeypatch):
+    """A fresh clone with no `.env` must not expose the operator page."""
+    monkeypatch.setattr(settings, "admin_token", "")
+    for supplied in (None, "", "anything"):
+        with pytest.raises(HTTPException):
+            require_admin(supplied)
+
+
+async def test_a_non_ascii_token_is_rejected_not_a_crash(admin_token):
+    """`compare_digest` raises on non-ASCII `str`; the token is attacker text."""
+    with pytest.raises(HTTPException):
+        require_admin("رمز-خاطئ")
+
+
+@pytest.mark.parametrize("handler", [admin_status, admin_stop])
+async def test_admin_endpoints_each_recheck_the_token(admin_token, handler):
+    with pytest.raises(HTTPException) as raised:
+        await handler(token="wrong")
+    assert raised.value.status_code == 401
+
+
+@needs_captures
+async def test_admin_start_rechecks_the_token(admin_token):
+    with pytest.raises(HTTPException) as raised:
+        await admin_start(token=None, capture="run1.jsonl")
+    assert raised.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Static assets
+# ---------------------------------------------------------------------------
+
+
+async def test_static_serves_the_allowlist():
+    for name, media_type in ASSETS.items():
+        if name in GENERATED and not (WEB_DIR / name).is_file():
+            continue
+        response = await asset(name)
+        assert Path(response.path).name == name
+        assert response.media_type == media_type
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "admin.html",      # a StaticFiles mount on web/ would hand this out
+        "index.html",
+        "../.env",
+        "../app/main.py",
+        "..\\.env",
+        "style.css.map",
+        "",
+    ],
+)
+async def test_static_refuses_everything_else(name):
+    with pytest.raises(HTTPException) as raised:
+        await asset(name)
+    assert raised.value.status_code == 404
+
+
+@pytest.mark.parametrize("name", PRESENT)
+def test_served_files_carry_no_credentials(name):
+    """the security rules: "grep served static files for SONIOX".
+
+    Read as bytes, not text, so the images are covered too rather than
+    skipped: a PNG can carry a text chunk, and an asset that cannot be
+    decoded is exactly the kind of place a secret goes unnoticed.
+    """
+    blob = (WEB_DIR / name).read_bytes().upper()
+    assert b"SONIOX" not in blob, f"{name} mentions Soniox"
+    assert b"ADMIN_TOKEN" not in blob, f"{name} mentions the admin token"
+    assert b"BEARER" not in blob, f"{name} carries an auth header"
+
+
+def test_the_audience_pages_never_link_to_admin():
+    """Section 8: `/admin` is "never linked from the audience page"."""
+    for name in ("index.html", "app.js", "auto.js", "screen.html", "screen.js",
+                 "style.css"):
+        text = (WEB_DIR / name).read_text(encoding="utf-8")
+        assert "/admin" not in text, f"{name} points at the operator page"
+
+
+def test_no_credential_is_written_into_the_source():
+    """The repo must not have gained a committed key.
+
+    Phase 3 wrote this as "`Bearer ` appears nowhere in `app/`", which worked
+    only while nothing in `app/` authenticated. Phase 5's client has to build
+    that header - it is the documented auth mechanism (spec section 3) - so
+    the check now enforces the actual invariant from the project notes: the key lives
+    in `.env` and nowhere else. Every `Bearer` must be built from the setting
+    on the spot, never from a literal.
+    """
+    for path in (ROOT / "app").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "sk-" not in text
+        for number, line in enumerate(text.splitlines(), 1):
+            if "Bearer" not in line:
+                continue
+            assert "api_key" in line, (
+                f"{path.name}:{number} names a bearer token without reading "
+                f"it from settings: {line.strip()!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Capture lookup
+# ---------------------------------------------------------------------------
+
+
+@needs_captures
+def test_available_captures_lists_the_fixtures():
+    names = available_captures()
+    assert "run1.jsonl" in names
+    assert names == sorted(set(names))
+
+
+@needs_captures
+def test_a_capture_is_found_by_bare_name():
+    assert resolve_capture("run1.jsonl").is_file()
+
+
+@needs_captures
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../../.env",
+        "..\\..\\.env",
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+        "../app/main.py",
+        ".env",
+        "",
+        "run1",
+        "recordings/english-2min.m4a",
+    ],
+)
+def test_capture_lookup_refuses_anything_else(name):
+    """Only the final path component is used, so traversal cannot reach out."""
+    with pytest.raises(HTTPException) as raised:
+        resolve_capture(name)
+    assert raised.value.status_code in (400, 404)
+
+
+@needs_captures
+def test_a_capture_path_collapses_to_its_filename():
+    """A full path to a real capture still resolves - via its name, not itself."""
+    resolved = resolve_capture("tests/fixtures/run1.jsonl")
+    assert resolved.name == "run1.jsonl"
+    assert resolved.is_file()
+
+
+# ---------------------------------------------------------------------------
+# The replay session
+# ---------------------------------------------------------------------------
+
+
+@needs_captures
+async def test_a_replay_drives_captions_and_ends_not_live(fresh_session, admin_token):
+    await admin_start(token=TOKEN, capture="run5-english.jsonl", paced=False)
+    assert fresh_session.state.live is True
+
+    await drain(fresh_session)
+
+    assert fresh_session.responses > 0
+    assert fresh_session.error is None
+    assert fresh_session.state.render("ar").strip()
+    assert fresh_session.state.render("en").strip()
+    # The capture ran out: the pages must stop claiming a live talk.
+    assert fresh_session.state.live is False
+
+
+@needs_captures
+async def test_a_viewer_sees_the_replay(fresh_session, admin_token):
+    socket = FakeWebSocket()
+    viewer = await fresh_session.hub.add(socket)
+    assert viewer is not None
+
+    await admin_start(token=TOKEN, capture="run5-english.jsonl", paced=False)
+    await drain(fresh_session)
+    await fresh_session.hub.flush()
+    for _ in range(6):
+        await asyncio.sleep(0)
+
+    messages = [json.loads(text) for text in socket.sent]
+    assert messages[0]["type"] == "snapshot"
+    assert any(m["type"] in ("snapshot", "diff") and m["streams"]["en"]
+               for m in messages[1:])
+
+
+@needs_captures
+async def test_stop_halts_a_running_replay(fresh_session, admin_token):
+    await admin_start(token=TOKEN, capture="run1.jsonl", paced=True)
+    assert fresh_session.running
+
+    await admin_stop(token=TOKEN)
+
+    assert not fresh_session.running
+    assert fresh_session.state.live is False
+
+
+@needs_captures
+async def test_starting_again_replaces_the_session(fresh_session, admin_token):
+    await admin_start(token=TOKEN, capture="run5-english.jsonl", paced=False)
+    await drain(fresh_session)
+    first = fresh_session.state.render("en")
+    assert first.strip()
+
+    await admin_start(token=TOKEN, capture="run5-english.jsonl", paced=False)
+    await drain(fresh_session)
+
+    # A fresh state, not the previous talk with a second copy appended.
+    assert fresh_session.state.render("en") == first
+
+
+@needs_captures
+async def test_status_is_safe_to_serve(fresh_session, admin_token):
+    await admin_start(token=TOKEN, capture="run5-english.jsonl", paced=False)
+    await drain(fresh_session)
+
+    response = await admin_status(token=TOKEN)
+    body = json.loads(response.body)
+
+    assert body["source"] == "run5-english.jsonl"
+    assert body["responses"] > 0
+    assert body["viewers"] == 0
+    assert "run1.jsonl" in body["captures"]
+    # No key, and no caption text: this is a status page, not a transcript.
+    assert "soniox" not in json.dumps(body).lower()
+
+
+async def test_an_unknown_capture_is_a_404(admin_token):
+    with pytest.raises(HTTPException) as raised:
+        await admin_start(token=TOKEN, capture="no-such-run.jsonl")
+    assert raised.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The viewer socket
+# ---------------------------------------------------------------------------
+
+
+async def test_a_socket_is_accepted_and_sent_a_snapshot(fresh_session):
+    socket = FakeWebSocket()
+
+    await viewer_socket(socket)
+
+    assert socket.accepted
+    assert json.loads(socket.sent[0])["type"] == "snapshot"
+    assert fresh_session.hub.viewer_count == 0  # disconnected, then cleaned up
+
+
+async def test_only_a_resync_is_acted_on(fresh_session, monkeypatch):
+    """The design brief: "ignore any client message except `{"type":"resync"}`"."""
+    seen: list[int] = []
+    monkeypatch.setattr(
+        fresh_session.hub, "resync", lambda viewer: seen.append(viewer.ident)
+    )
+    socket = FakeWebSocket([
+        {"type": "websocket.receive", "text": '{"type":"resync"}'},
+        {"type": "websocket.receive", "text": '{"type":"clear"}'},
+        {"type": "websocket.receive", "text": '{"type":"resync","extra":1}'},
+        {"type": "websocket.receive", "text": "not json at all"},
+        {"type": "websocket.receive", "text": '"resync"'},
+        {"type": "websocket.receive", "text": '["resync"]'},
+        {"type": "websocket.receive", "bytes": b"\x00\x01audio?"},
+        # Oversized: dropped on length alone, before parsing. The cap moved
+        # from 200 bytes to 4 kB when pages started sending health reports
+        # and - once per fault - a diagnostic, so this has to be bigger than
+        # it used to be to still be testing the same thing.
+        {"type": "websocket.receive",
+         "text": '{"type":"resync"}' + " " * 5000},
+        {"type": "websocket.disconnect", "code": 1000},
+    ])
+
+    await viewer_socket(socket)
+
+    # Two honoured: the plain one and the one with a harmless extra field.
+    # The oversized copy is ignored on length alone, before parsing.
+    assert len(seen) == 2
+
+
+async def test_a_full_house_refuses_a_socket_without_serving_it(
+    fresh_session, monkeypatch
+):
+    monkeypatch.setattr(fresh_session.hub, "max_viewers", 0)
+    socket = FakeWebSocket()
+
+    await viewer_socket(socket)
+
+    assert socket.accepted
+    assert socket.sent == []
+    assert socket.closed == 1013
+
+
+async def test_a_viewer_is_removed_when_its_page_closes(fresh_session):
+    socket = FakeWebSocket([{"type": "websocket.disconnect", "code": 1001}])
+
+    await viewer_socket(socket)
+
+    assert fresh_session.hub.viewer_count == 0
+
+
+# ---------------------------------------------------------------------------
+# The admin token comes from .env, and only from .env
+# ---------------------------------------------------------------------------
+#
+# Rule set on 2026-10-13: never start the server with a token passed on the
+# command line. A throwaway value in an env var is convenient and leaves the
+# real token untested, so a session can look fine all afternoon and then fail
+# when it is started the normal way.
+
+
+def test_the_env_file_is_read_from_the_repo_root_not_the_cwd():
+    """`uvicorn` is often started from somewhere else, and a token that
+    silently fails to load is the failure this whole rule exists to avoid."""
+    from app.settings import ROOT as settings_root
+    from app.settings import Settings
+
+    configured = Settings.model_config["env_file"]
+    assert Path(configured).is_absolute(), (
+        f"the env file is resolved relatively ({configured}); the token would "
+        f"depend on which directory the server was started from"
+    )
+    assert Path(configured) == settings_root / ".env"
+    # ...and the root is derived from this module's own location, so it does
+    # not move when the process does.
+    assert settings_root == Path(app.settings.__file__).resolve().parent.parent
+
+
+def test_a_fresh_clone_is_issued_a_token(monkeypatch, tmp_path):
+    """A clone with no `.env` must come up usable, not refuse to start.
+
+    It is still never allowed to come up with an *empty* token - a server
+    that serves pages and denies every operator request looks like a working
+    one. So the blank case generates rather than refuses, and what it
+    generates is a real token.
+    """
+    from app.main import ensure_admin_token
+
+    monkeypatch.setattr(settings, "admin_token", "")
+    env = tmp_path / ".env"
+    said = []
+    token = ensure_admin_token(env_path=env, announce=said.append)
+
+    assert len(token) >= 32, "a generated token must not be guessable"
+    assert settings.admin_token == token, "the running server must use it"
+    assert f"ADMIN_TOKEN={token}" in env.read_text(encoding="utf-8")
+    assert len(said) == 1, "the token is announced exactly once"
+    assert str(env) in said[0], "the operator is told where it went"
+
+
+def test_whitespace_is_not_a_token(monkeypatch, tmp_path):
+    """`"   \n"` is as unusable as `""` and must be replaced, not kept."""
+    from app.main import ensure_admin_token
+
+    monkeypatch.setattr(settings, "admin_token", "   \n")
+    token = ensure_admin_token(env_path=tmp_path / ".env",
+                               announce=lambda _: None)
+    assert token.strip() == token and len(token) >= 32
+
+
+def test_a_configured_token_is_left_alone(monkeypatch, tmp_path):
+    """Idempotent: nothing is generated, written or printed."""
+    from app.main import ensure_admin_token
+
+    monkeypatch.setattr(settings, "admin_token", "any-real-token")
+    env = tmp_path / ".env"
+    said = []
+    assert ensure_admin_token(env_path=env, announce=said.append) == (
+        "any-real-token")
+    assert not env.exists(), "an existing token must not touch .env"
+    assert said == [], "nothing to announce"
+
+
+def test_generating_a_token_never_destroys_an_env_file(monkeypatch, tmp_path):
+    """An operator hand-edits this file. Appending is the only safe write."""
+    from app.main import ensure_admin_token
+
+    env = tmp_path / ".env"
+    env.write_text("SONIOX_API_KEY=keep-me\n# ADMIN_TOKEN=\n",
+                   encoding="utf-8")
+    monkeypatch.setattr(settings, "admin_token", "")
+    ensure_admin_token(env_path=env, announce=lambda _: None)
+
+    body = env.read_text(encoding="utf-8")
+    assert "SONIOX_API_KEY=keep-me" in body, "an existing value was lost"
+    assert "# ADMIN_TOKEN=" in body, "a commented placeholder was lost"
+
+
+def test_an_unwritable_env_still_yields_a_working_token(monkeypatch, tmp_path):
+    """A read-only checkout gets a token for this run and is told so."""
+    from app.main import ensure_admin_token
+
+    monkeypatch.setattr(settings, "admin_token", "")
+    said = []
+    # A directory where the file should be: the open() fails with OSError.
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    token = ensure_admin_token(env_path=blocked, announce=said.append)
+
+    assert len(token) >= 32 and settings.admin_token == token
+    assert said and "this run only" in said[0]
+
+
+def test_the_startup_message_template_renders(monkeypatch):
+    """It is a template, and a missing field would render as a brace."""
+    from app.main import NEW_TOKEN_MESSAGE
+
+    rendered = NEW_TOKEN_MESSAGE.format(env="/tmp/.env", url="http://x/admin")
+    assert "{" not in rendered and "}" not in rendered
+    assert settings_real_token() not in NEW_TOKEN_MESSAGE
+
+
+def settings_real_token() -> str:
+    """The operator's actual token, read once so tests can prove it never
+    appears anywhere. Never printed, never asserted *equal* to anything."""
+    from app.settings import Settings
+
+    return Settings().admin_token or "\x00-no-token-configured-\x00"
+
+
+def test_no_committed_file_contains_the_operator_token():
+    """The real token must not have leaked into a doc, a script or a test
+    while someone was writing an example."""
+    token = settings_real_token()
+    if token.startswith("\x00"):
+        pytest.skip("no ADMIN_TOKEN configured on this machine")
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = set(path.parts)
+        if parts & {".git", ".venv", "__pycache__", ".pytest_cache", "logs",
+                    "recordings", "clips"}:
+            continue
+        if path.name == ".env":
+            continue  # the one place it belongs
+        try:
+            blob = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        assert token not in blob, f"the admin token appears in {path.name}"
+
+
+def test_tests_use_their_own_token_not_the_operators():
+    """Every test token in this suite is an obvious fake."""
+    token = settings_real_token()
+    for path in (ROOT / "tests").glob("test_*.py"):
+        blob = path.read_text(encoding="utf-8")
+        assert token not in blob, f"{path.name} uses the operator's token"

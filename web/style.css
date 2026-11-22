@@ -1,0 +1,1884 @@
+/* Shared by the audience page, the big screen and the operator page.
+ *
+ * Read in a dim room, on a phone held at arm's length, by someone who will
+ * not pinch-zoom while a talk is running. So: dark background, large text,
+ * high contrast, generous line height, nothing that reflows as text arrives.
+ *
+ * Direction, deliberately not what the design brief suggests. The spec says to use
+ * `dir="auto"` on mixed content. That is wrong for this content: `dir="auto"`
+ * takes the paragraph's base direction from its first strong character, so an
+ * Arabic caption beginning "RAG يعني..." would lay out left-to-right with the
+ * Arabic punctuation stranded on the wrong side - and a caption beginning with
+ * a Latin technical term is exactly what config/glossary.yaml is meant to
+ * produce. Instead each stream declares its own base direction (`rtl` on the
+ * Arabic stream, `ltr` on the English one) and the Unicode bidi algorithm
+ * places embedded Latin runs inside Arabic prose correctly on its own.
+ */
+
+:root {
+  color-scheme: dark;
+  /* Adjusted by the A- / A+ controls and persisted in localStorage. */
+  --size: 22px;
+  --bg: #0b0b0d;
+  --fg: #f4f4f5;
+  --dim: #8b8b94;
+  --line: #24242b;
+
+  /* The accent: the one colour the design leans on, and the first thing
+     a theme changes. This is the neutral default - set `accent` in
+     `config/brand.json` and `/brand.css` overrides it at runtime.
+
+     It is chosen for contrast, not for a look. Against the page background
+     it reads 7.5:1, which clears WCAG AA for body text with room to spare,
+     and `--accent-ink` on top of it reads the same 7.5:1 the other way, so
+     text on the accent is as legible as text beside it. A theme that
+     replaces the accent with something pale must set `accent_ink` too, or
+     anything drawn on it loses contrast. */
+  --accent: #4DA3FF;
+  --accent-ink: #0B0B0D;
+
+  /* The projector's one surface colour, and the only one `/screen` is
+     allowed to paint. Set `background` in `config/brand.json` to change it.
+
+     It is not pure #000, and the reason is worth keeping: the projector
+     view used to mix #000 for the page with a near-black tile, which is
+     invisible on a laptop and a visible patch on a calibrated projector.
+     One token, every surface - the root element, the body, the stream
+     panes, the title card and the footer band - so there is nothing left
+     to drift. A browser test samples the rendered screen and fails on any
+     second black actually painted. */
+  --bg-brand: #0B0B0D;
+
+  /* The signal colours. These are status, so they have to stay clearly
+     apart from the accent across a dim room - the test suite asserts a
+     minimum hue separation rather than these exact values, so a theme that
+     moves the accent into amber or rose fails the suite instead of shipping
+     an ambiguous screen. The reds are rose rather than plain red: it keeps
+     the separation whatever warm accent a theme picks, and the contrast
+     went up rather than down. */
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --bad-strong: #e11d48;
+  --ok: #4ade80;
+
+  /* The waiting screen's second colour, and the only place it is used: the
+     cool glow behind the left of the poster and the dot beside the note
+     under the card. It is not a signal colour and it never appears beside one -
+     nothing on that screen is a status - so it is free to sit where it
+     likes in the wheel. It is the counterweight to the accent: the poster
+     would be one warm wash without it. */
+  --teal: #2BC4B4;
+
+  /* The two washes behind the waiting screen and the caption view. They are
+     named rather than written out, and they are **references** rather than
+     colours, so theming `--accent` moves the warm one with it. They used to
+     be the brand orange written as decimal `rgba()`, which is how a brand
+     colour survives a search for its hex.
+
+     Cool and warm rather than teal and orange: the pair wants contrast
+     between the two corners, not any particular hue. */
+  --glow-cool: var(--teal);
+  --glow-warm: var(--accent);
+
+  --font-en: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-ar: "IBM Plex Sans Arabic", "Noto Naskh Arabic", "Segoe UI",
+    Tahoma, sans-serif;
+  /* Chrome only - headings, buttons, the wordmark - never captions. A
+     geometric face to match the logo, with the system stack behind it so a
+     slow venue network costs a reflow of the header and nothing else. The
+     captions themselves never wait on a download. */
+  --font-brand: "Outfit", system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  /* The waiting screen only. A tight, heavy grotesque, which is what the
+     organizer's own site and the Figma both use for a headline - Outfit is
+     geometric and goes wide and soft at 800, and the headline is the one
+     piece of type in this project that has to carry a room on its own.
+     Outfit sits behind it so a failed download lands on the family the rest
+     of the chrome already uses, and the system stack behind that. No
+     caption ever reads this. */
+  --font-display: "Inter Tight", "Outfit", system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+
+  /* The wordmarks' native pixel sizes. Unitless on purpose: `aspect-ratio`
+     will not take a length, and `calc(var(--wm-en-w) * 1px)` covers the
+     places that want one.
+
+     These are the **defaults for a clone with no artwork at all**, which is
+     why they are here rather than only in the generated file. Drop real
+     wordmarks into `brand/` and run `tools/brand_assets.py`, and the
+     generated `brand-sizes.css` overrides every one of them with the real
+     artwork's measurements - so larger artwork resizes the title card by
+     itself and no literal in this stylesheet describes a particular file.
+     Without that file the ratios below still lay out a sane lockup, and
+     `/brand.css` hides the empty image slots entirely. */
+  --wm-en-w: 389;
+  --wm-en-h: 73;
+  --wm-ar-w: 350;
+  --wm-ar-h: 162;
+  --wm-ar-en-ratio: 0.8997;
+  --wm-ar-nudge: 0.043702;
+}
+
+* { box-sizing: border-box; }
+
+/* The typed event name, used wherever a wordmark image would go when the
+   theme has no artwork for that slot. Hidden by default and switched on by
+   `/brand.css`, which is generated by the server and therefore knows which
+   image files actually exist - so a clone with no branding shows the name
+   as type instead of a broken image, and a clone with artwork never shows
+   both. */
+.brand-eventname { display: none; }
+
+/* `hidden` has to beat every `display` any later rule sets, and a plain
+   `[hidden] { display: none }` does not: `body.screen .stream` is (0,2,1)
+   against its (0,1,0), so the three `/screen` panes all stayed laid out and
+   the visible one got a third of the projector. The attribute is how every
+   page here shows and hides things, so it is settled once, globally. */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-en);
+  font-size: var(--size);
+  line-height: 1.55;
+  /* `dvh` keeps the layout correct while iOS Safari's toolbars slide away;
+   * `vh` first so a browser without `dvh` still gets a full-height page. */
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* -- header ------------------------------------------------------------- */
+
+header {
+  flex: none;
+  padding: 0.6rem 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* -- the mark ----------------------------------------------------------- */
+
+/* One rounded tile, used on every page at whatever size its context sets.
+   The image is `web/logo.png`, rebuilt from `web/brand/logo.png` by
+   `tools/brand_assets.py`, so swapping the artwork is a file and a command
+   and touches no markup. `object-fit: cover` on a square box means artwork
+   of any aspect still fills the tile rather than letterboxing inside it. */
+.brandmark {
+  flex: none;
+  width: var(--mark, 1.9rem);
+  height: var(--mark, 1.9rem);
+  border-radius: 0.5rem;
+  border: 1px solid var(--line);
+  background: var(--bg-brand);
+  overflow: hidden;
+}
+
+.brandmark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.brandline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+/* The wordmark's own detail, borrowed once per page and never repeated.
+   Inline SVG rather than a glyph: U+2726 is missing from enough system
+   fonts that it would show as a box on exactly the phones that matter. */
+.sparkle {
+  flex: none;
+  width: 0.62em;
+  height: 0.62em;
+  color: var(--accent);
+}
+
+#state {
+  flex: none;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+#state.live { color: var(--ok); }
+#state.reconnecting, #state.connecting { color: var(--warn); }
+/* The engine stopped on purpose (ten minutes of silence), which is neither
+   trouble nor a live talk. */
+#state.paused { color: #94a3b8; }
+
+.disclaimer {
+  margin: 0.15rem 0 0;
+  font-size: 0.62rem;
+  color: var(--dim);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.controls button {
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  font: inherit;
+  font-family: var(--font-brand);
+  font-size: 0.7rem;
+  color: var(--fg);
+  background: #16161b;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.controls button[lang="ar"] { font-family: var(--font-ar); }
+
+.controls button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.sizer { margin-inline-start: auto; display: flex; gap: 0.35rem; }
+.sizer button { min-width: 2.2rem; font-variant-numeric: tabular-nums; }
+
+/* -- streams ------------------------------------------------------------ */
+
+/* Everything except the operator page - so the audience page and the big
+   screen, both of which use `main` for their stream columns. The background
+   here is the hairline between the two columns in "Both": a 1px grid gap
+   with the line colour showing through. Unscoped, it also painted the
+   operator page's grid, which is why the area around those cards looked a
+   shade lighter than the page itself. */
+body:not(.admin) main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  grid-template-columns: 1fr;
+}
+
+/* In "Both", two equal rows on a phone and two columns once there is room
+ * for them. Each stream scrolls independently either way, which is the point:
+ * stacked, you must be able to reach the Arabic without scrolling past all of
+ * the English.
+ *
+ * **These selectors must stay as specific as the rule above.** They were
+ * written as a bare `main.both`, which is specificity (0,1,1) against the
+ * (0,1,2) of `body:not(.admin) main` - and a media query adds none. So
+ * `grid-template-columns: 1fr` won on every screen width and "Both" was laid
+ * out as two *stacked* tracks even on a 1920px laptop: one explicit `1fr` row
+ * and one implicit content-sized row, which is why the English column came
+ * out 336px tall against the Arabic one's 646px. Keep the `body:not(.admin)`
+ * prefix on both rules or the desktop layout silently reverts. */
+body:not(.admin) main.both { grid-template-rows: 1fr 1fr; }
+
+@media (min-width: 46rem) {
+  body:not(.admin) main.both {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+}
+
+/* The positioning context for that column's "Jump to live". A grid item in
+   its own right, so the stream inside it is what scrolls, not the column. */
+.column {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.column[hidden] { display: none; }
+
+.column > .stream { flex: 1; }
+
+.stream {
+  background: var(--bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* The deep bottom padding is deliberate: scrolled to the live edge, the
+   * newest line sits around two-thirds down the screen rather than against
+   * the bottom bezel, which is where the eye already is. */
+  padding: 0.75rem 0.85rem 30vh;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stream[hidden] { display: none; }
+
+.stream[dir="rtl"] { font-family: var(--font-ar); line-height: 1.8; }
+
+.stream p {
+  margin: 0 0 0.85em;
+  /* Long URLs or a run-on paragraph must never widen the page: at 360px
+   * there is no room for a horizontal scrollbar. */
+  overflow-wrap: break-word;
+}
+
+.partial { color: var(--fg); opacity: 0.6; }
+
+.note {
+  color: var(--dim);
+  font-size: 0.8rem;
+  font-style: normal;
+}
+
+/* A gap the audience should know about: audio that was captured during a
+   reconnect and deliberately never sent, because catching up would leave the
+   captions permanently late. Muted and italic so it reads as an aside and is
+   never mistaken for something the speaker said. */
+#stream-en .notice,
+#stream-ar .notice,
+#screen-stream .notice {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 0.8em;
+  opacity: 0.75;
+}
+
+/* -- jump to live ------------------------------------------------------- */
+
+/* Absolute inside `.column`, not fixed to the viewport: in "Both" there are
+   two of these on screen at once and each one must sit over the column it
+   belongs to, so the reader can tell which language is behind. */
+.jump {
+  position: absolute;
+  bottom: 1.1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.55rem 1.1rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+.jump[hidden] { display: none; }
+
+/* -- big screen (/screen) ----------------------------------------------- */
+
+/* Edge to edge black. The grid that holds the panes paints `--line` so the
+   audience page gets a hairline between its two columns; on the projector
+   that colour showed straight through the stream's top fade as a grey wash
+   across the full width. There is only ever one pane here, so there is no
+   hairline to keep. */
+body.screen main { background: var(--bg-brand); }
+
+/* The root element too, not only the body: a projector that overscrolls,
+   or a browser painting outside the body box, must not flash a different
+   black at the edge. */
+html.screen { background: var(--bg-brand); }
+
+body.screen {
+  background: var(--bg-brand);
+  --bg: var(--bg-brand);
+  /* The one knob for the title card's lockup: the width of the English
+     wordmark. Capped at that master's own native width so it is never
+     upscaled into blur; the Arabic mark is a fixed fraction of this, so at
+     the cap both sit at exactly their own native resolution.
+
+     Both numbers come from `brand-sizes.css`, which `tools/brand_assets.py`
+     regenerates from the artwork. That is what makes larger masters a
+     one-command swap: at 389px wide the cap binds and the card is a fifth
+     of a 1080p screen, while a 3x master lets the 40vw term win and the
+     card simply gets bigger. Nothing here changes either way. */
+  --title-lockup: min(40vw, calc(var(--wm-en-w) * 1px));
+  /* Height of the footer band. Used by the band itself, by the padding that
+     reserves room for it, and by the listening dots that sit above it, so
+     the three cannot drift apart. Sized from the strip's own contents: a
+     3.5vh mark with room to breathe around it. */
+  --footer-h: 7.5vh;
+  /* Set by the operator's "Main screen" control, or `?size=`. Sized so a
+     line on 1920x1080 runs to roughly 50-60 characters, which is a
+     comfortable measure; `vh` caps it so a short, wide projector does not
+     end up with two words per line. */
+  --screen-size: min(3.2vw, 5.4vh);
+  /* The band the corner marks sit in: one knob for the band's own height
+     and for the padding that reserves it out of `main`, so the two cannot
+     drift apart. Same arrangement as `--footer-h`, and the same reason -
+     "the marks never cover a caption" is then a property of the layout
+     rather than of the text happening to be short.
+
+     Sized from the **Arabic** mark, which is 2.2x the Latin one's height:
+     the lockup row is 9.4vh here - 7.8vh of artwork plus the 1.6vh of
+     padding that re-centres it - and the rest is air. It was 8vh when the
+     corner held the Latin mark alone. */
+  --logo-band: 12vh;
+  /* The two glows behind the caption view, defined once and painted in two
+     places: the layer behind the page, and the title card, which covers
+     the whole viewport and would otherwise be a flat black flash between
+     the poster and the captions.
+
+     Cool upper-left, warm lower-right - the poster's two lights, put on
+     the diagonal the captions do not use. Both centres sit **on** the
+     viewport corners so most of each gradient falls outside the screen:
+     what is left is a wash at the corners and the dimmest part of it in
+     the middle and along the bottom, which is exactly where the caption
+     lines run.
+
+     Alpha is nominally just under the poster's 0.20/0.22 and lands far
+     below it: the poster's centres are *inside* the viewport, so its
+     peaks are on screen, while these two peak on the corners and the
+     room only ever sees the shoulder. There the glow is the only thing
+     on screen; here there are words over it, and the floor they clear is
+     measured rather than judged - a browser test screenshots the live
+     view and requires every caption line to keep 12:1 against the
+     brightest background pixel behind it. Measured at this alpha: 15.4:1
+     at the worst line, against 19.8:1 on the flat black. */
+  --screen-glow:
+    radial-gradient(70vw 88vh at 0% 0%,
+                    color-mix(in srgb, var(--glow-cool) 17%, transparent),
+                    transparent 70%),
+    radial-gradient(74vw 92vh at 100% 100%,
+                    color-mix(in srgb, var(--glow-warm) 19%, transparent),
+                    transparent 70%);
+}
+
+/* The glow layer itself. Fixed, inert, and behind everything: `z-index: -1`
+   puts it under every positioned thing on the page but still above the
+   root element's black, which is what `html.screen` paints. `body.screen`
+   gives up its own background while the glow is on so it cannot cover it -
+   the brand black is still there, one layer down.
+
+   An element rather than a background on `body` so the same declaration
+   can go on the title card, and so nothing about this depends on the body
+   box staying exactly the viewport. */
+.screenglow {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  display: none;
+  background: var(--screen-glow);
+}
+
+/* Off is the plain black the captions were designed against, and it is
+   what `test_the_projector_paints_one_black_and_no_other` measures. On,
+   every surface over the glow has to stop painting the black on top of it,
+   or the wash arrives in bands with the footer and the panes cut out of
+   it. */
+body.screen[data-glow="1"] .screenglow { display: block; }
+body.screen[data-glow="1"] { background-color: transparent; }
+body.screen[data-glow="1"] main { background: transparent; }
+/* The panes paint `--bg` from the shared rule the audience page needs, and
+   on this page that is the brand black - which would cut a flat rectangle
+   out of the wash exactly where the captions are. */
+body.screen[data-glow="1"] .stream { background: transparent; }
+
+body.screen[data-size="s"]  { --screen-size: min(2.0vw, 3.4vh); }
+body.screen[data-size="m"]  { --screen-size: min(2.6vw, 4.4vh); }
+body.screen[data-size="l"]  { --screen-size: min(3.2vw, 5.4vh); }
+body.screen[data-size="xl"] { --screen-size: min(4.0vw, 6.8vh); }
+
+/* `?lang=both` on the projector reuses the audience page's two-column grid
+   rather than growing a second one. The `body:not(.admin)` prefix is what
+   keeps it from losing to the single-column default - see the note on
+   `main.both` above; this selector is more specific still. */
+@media (min-width: 46rem) {
+  body.screen[data-view="both"] main {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+}
+
+/* Newest text pinned to the bottom, anything taller than the frame clipped
+ * off the top. `lines` counts paragraphs, and a paragraph runs to
+ * MAX_PARAGRAPH_CHARS (360) - at this size that is more than one screenful on
+ * its own, so clipping is the normal case, not an edge case. The mask fades
+ * the cut instead of slicing a row of letters in half, which is the
+ * difference between looking deliberate and looking broken on a projector. */
+body.screen .stream {
+  font-size: var(--screen-size);
+  font-weight: 500;
+  line-height: 1.3;
+  /* The deep bottom padding is the listening indicator's gutter. Without it
+     the dots sit on top of the newest line, which is the one line the room
+     is actually reading. */
+  padding: 3vh 4vw 7.5vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12%);
+}
+
+body.screen .stream[dir="rtl"] { line-height: 1.5; }
+body.screen .stream p { margin: 0 0 0.5em; }
+body.screen .stream p:last-child { margin-bottom: 0; }
+
+/* -- the translation-only view ------------------------------------------ */
+
+/* The measure, not the pane, is what is centred: a 1920px-wide line of 50
+   characters would be unreadable, and a pane narrower than the screen would
+   waste the projector. */
+body.screen .stream.auto {
+  align-items: center;
+}
+
+.auto-para {
+  width: 100%;
+  max-width: 26em;
+  margin: 0 0 0.55em;
+  overflow-wrap: break-word;
+}
+
+.auto-para:last-child { margin-bottom: 0; }
+
+/* Direction, alignment and typeface all follow the paragraph, because the
+   paragraph above it may well be the other language. */
+.auto-para[dir="ltr"] { text-align: left; font-family: var(--font-en); }
+.auto-para[dir="rtl"] {
+  text-align: right;
+  font-family: var(--font-ar);
+  line-height: 1.55;
+}
+
+/* A direction change is the one boundary the eye needs help with. Thin,
+   dim, and short of the full measure, so it reads as a breath rather than
+   as a rule across the screen. */
+.auto-para.turn {
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  margin-top: 0.5em;
+  padding-top: 0.5em;
+}
+
+/* Which way the language just turned. In `auto` nothing else marks it - the
+   speaker does not change on screen, only the script does - so the rule gets
+   a tag. `direction: ltr` so the arrow always reads left to right whatever
+   the paragraph does, `text-align: start` so it sits at the edge the text
+   below it starts from. Projector only; the audience page keeps the bare
+   rule. */
+body.screen[data-labels="1"] .auto-para.turn::before {
+  content: attr(data-turn);
+  display: block;
+  direction: ltr;
+  text-align: start;
+  font-family: var(--font-brand);
+  /* Judged at projector distance like everything else here: 0.3em of #55555e
+     was 2.6:1 and simply disappeared. Still unmistakably a label rather than
+     a caption - a third the size, and half the contrast. */
+  font-size: 0.34em;
+  letter-spacing: 0.14em;
+  color: #8a8a94;
+  margin-bottom: 0.9em;
+}
+
+.auto-para.notice {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 0.7em;
+  opacity: 0.75;
+}
+
+/* -- listening and the link dot ----------------------------------------- */
+
+/* Three soft dots. Not a spinner: a projector sits behind the speaker and
+   anything that spins pulls the room's eye off them. */
+.listening {
+  position: fixed;
+  bottom: 3.5vh;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.75vh;
+}
+
+.listening[hidden] { display: none; }
+
+.listening i {
+  width: 1.4vh;
+  height: 1.4vh;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+.listening i:nth-child(2) { animation-delay: 0.3s; }
+.listening i:nth-child(3) { animation-delay: 0.6s; }
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.9; }
+}
+
+/* Nothing should ever move on a projector for people who asked it not to. */
+@media (prefers-reduced-motion: reduce) {
+  .listening i { animation: none; opacity: 0.55; }
+}
+
+/* Before the first session: a friendly line in both languages, centred,
+   dim enough that it is clearly not a caption. */
+/* -- the title card ----------------------------------------------------- */
+
+/* Covers the captions whenever there are none worth showing - before the
+   talk, between the first word and its translation, and after Stop. It does
+   not clear them: the text underneath is still there when a session resumes.
+
+   `visibility` rather than `hidden`, because the global `[hidden]` rule is
+   `display: none !important` and nothing can be faded out of that. */
+.titlecard {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55em;
+  text-align: center;
+  padding: 0 6vw;
+  background: var(--bg-brand);
+  pointer-events: none;
+  font-family: var(--font-brand);
+  font-size: calc(var(--screen-size) * 0.46);
+  opacity: 0;
+  visibility: hidden;
+  /* Above the footer strip, below the link dot: when there are no captions
+     the card is the whole screen and the standing disclaimer has nothing to
+     stand under, but a reconnect still has to be visible through it. */
+  z-index: 2;
+  transition: opacity 450ms ease, visibility 0s linear 450ms;
+}
+
+.titlecard.show {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 450ms ease, visibility 0s linear 0s;
+}
+
+/* It appears and disappears in front of a room, so it fades. For anyone who
+   has asked the system not to animate, it simply is or is not there. */
+@media (prefers-reduced-motion: reduce) {
+  .titlecard, .titlecard.show { transition: none; }
+}
+
+/* The card covers the whole viewport, so it needs the background glow
+   painted on it rather than showing the layer behind: it is opaque on
+   purpose, because the captions underneath must not read through it.
+   The same gradients in the same units as the page, so the two are lit
+   identically and going poster -> card -> captions never flashes a
+   different style at a room. */
+body.screen[data-glow="1"] .titlecard {
+  background-image: var(--screen-glow);
+}
+
+/* Both wordmarks in one row, Latin left and Arabic right, centred as a
+   group - the way the default theme lays the mark out. No background and
+   no radius: the artwork is white on transparent, so the card's own black
+   shows through and the mark stops reading as a grey tile pasted onto the
+   page.
+
+   `row` and `nowrap` are both written out. The direction is forced to ltr
+   on the element itself, so neither an RTL ancestor nor a future
+   `flex-direction: row-reverse` can swap which mark lands on which side,
+   and the row can never become two lines - it would stop being a lockup
+   and start being a list.
+
+   Vertical alignment is `center`, chosen by measuring rather than by eye:
+   the two marks are wildly different shapes - the Arabic one carries
+   sparkles above its script and dots below it, so it is 2.2x the Latin
+   mark's height - but the centre of each one's main ink band sits at
+   0.61 and 0.605 of its own box. Centring the boxes therefore lands the
+   two scripts within about 5% of the Arabic mark's height of each other.
+   Aligning the bottoms instead floats the Arabic script ~35px high at
+   1080p, because almost all of its spare room is below the baseline. */
+.titlecard-lockup {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  /* About one Latin letter-pair of air, and no rule between them. In `em`
+     of the card, so it tracks the operator's text size and the screen
+     rather than being a pixel count. */
+  gap: 3em;
+  margin-bottom: 0.5em;
+}
+
+/* `aspect-ratio` from the artwork rather than width/height attributes in
+   the markup: the box is reserved correctly before the image loads, and it
+   stays correct when the artwork is replaced. */
+.titlecard-wordmark {
+  display: block;
+  height: auto;
+  object-fit: contain;
+}
+
+/* One knob, two marks. `--wm-ar-en-ratio` is the ratio of the masters' own
+   trimmed widths, so when `--title-lockup` reaches its cap both are drawn
+   at 1:1 and neither is interpolated. */
+.titlecard-wordmark.en {
+  width: var(--title-lockup);
+  aspect-ratio: var(--wm-en-w) / var(--wm-en-h);
+}
+
+.titlecard-wordmark.ar {
+  width: calc(var(--title-lockup) * var(--wm-ar-en-ratio));
+  aspect-ratio: var(--wm-ar-w) / var(--wm-ar-h);
+  /* Centring the boxes leaves the Arabic script sitting ~16px low at
+     1080p, because its spare room is lopsided - sparkles above, dots
+     below. This lifts it onto the Latin baseline. The amount is measured
+     from the artwork by `tools/brand_assets.py` and rounded so that at
+     the cap, where the marks are drawn 1:1, it is a whole number of
+     pixels rather than a resample. Transform, not margin: the row's
+     height stays the artwork's and nothing below it moves. */
+  transform: translateY(calc(var(--title-lockup) * var(--wm-ar-nudge) * -1));
+}
+
+.titlecard p { margin: 0; }
+
+.titlecard-lead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  font-size: 1.45em;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.titlecard-lead [lang="ar"] { font-family: var(--font-ar); }
+.titlecard-lead .sparkle { width: 0.5em; height: 0.5em; }
+
+.titlecard-pair {
+  color: #9a9aa4;
+  letter-spacing: 0.06em;
+  font-size: 0.86em;
+}
+
+.titlecard-pair [lang="ar"] { font-family: var(--font-ar); }
+
+.titlecard-credit {
+  margin-top: 0.95em;
+  /* ~21px at 1080p. At 0.66em/#6f6f78 it was 18px at 3.6:1 and the last
+     thing on the card you could read; it is a secondary line, not a hidden
+     one. */
+  font-size: 0.78em;
+  color: #8a8a94;
+}
+
+.titlecard-credit[hidden] { display: none; }
+
+/* -- the footer strip --------------------------------------------------- */
+
+/* The disclaimer the room is owed. Reserved space, not an overlay: the
+   padding below shrinks the grid area the stream fills, so the captions stop
+   above it however long they run. Dim, small and still - it is a standing
+   note, not a thing to look at. */
+body.screen[data-footer="1"] main { padding-bottom: var(--footer-h); }
+
+.screenfooter {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--footer-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2vw;
+  padding: 0 2vw;
+  font-family: var(--font-brand);
+  /* ~20px at 1080p. Sized in `vh` rather than from `--screen-size`: the
+     disclaimer has to stay readable from the back of the room whatever the
+     operator does to the caption size, and tying it to the captions meant it
+     shrank with them. */
+  font-size: 1.9vh;
+  /* Its own band, painted rather than transparent: the stream above fades
+     out under a mask, and a translucent strip let the tail of that fade
+     show through the disclaimer. The brand black, like every other surface
+     here. */
+  background: var(--bg-brand);
+  /* Clearly secondary to the captions, and still legible at distance. The
+     previous #5d5d66 was 2.8:1 on black and vanished on a projector. */
+  color: #a1a1aa;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* There is deliberately no `.screenfooter img` rule. The strip carried the
+   Latin wordmark at 2.3vh until 2026-10-20, when it was asked off:
+   `/screen` already signs itself twice - the corner lockup across the top
+   and the title card between talks - and a third mark in the one band whose
+   job is a disclaimer was the one that could go. The band keeps its height
+   and the text keeps its size and colour; it is simply centred alone now.
+   A test asserts the footer contains no image, so it cannot drift back. */
+
+/* The strip paints the brand black so the stream's fade cannot show
+   through the disclaimer - but over the glow that black is a bar cut out
+   of the wash along the whole bottom edge. Transparent is safe here
+   because `main` reserves the band: no caption is ever behind it. */
+body.screen[data-glow="1"] .screenfooter { background: transparent; }
+
+.screenfooter [lang="ar"] { font-family: var(--font-ar); }
+.screenfooter-sep { opacity: 0.5; }
+
+/* The dots live above the footer when there is one, never on it. */
+body.screen[data-footer="1"] .listening {
+  bottom: calc(var(--footer-h) + 2.5vh);
+}
+
+/* -- the optional corner marks on the projector ------------------------- */
+
+/* Off unless the operator turns it on. It is given a band of its own at the
+   top rather than being floated over the text: the captions are anchored to
+   the bottom and clipped at the top, so anything overlaid up there would sit
+   on half-faded words. Padding on `main` shrinks the grid area the stream
+   fills, which moves the clip line below the mark - so "never covers
+   captions" is a property of the layout, not of the text happening to be
+   short. */
+body.screen[data-logo="1"] main { padding-top: var(--logo-band); }
+
+/* Both marks or neither, at the two ends of the top band: Latin left,
+   Arabic right, mirrored 2vw margins. The caption view used to carry the
+   Latin mark alone; the poster has always carried both at the ends of its
+   rule, and the room now sees the same lockup whether or not anyone is
+   speaking.
+
+   No tile, and that is the point: the artwork carries its own
+   transparency, so what shows behind the letterforms is whatever the page
+   is painting - the brand black, or the glow - and not a second surface on
+   top of it.
+
+   These are the wordmarks, not the stacked lockup: the stacked one is two
+   lines of type and at corner size the Arabic line is the only part still
+   legible. The Latin mark is sized by *height*, because that is what
+   decides whether it reads from the back of the room; 3.5vh is 38px at
+   1080p, putting the letterforms around 26px - still clearly bigger than
+   the footer's 20px disclaimer, which is the relationship that matters. */
+.screenmark {
+  position: fixed;
+  top: 0;
+  /* Mirrored, so neither mark is nearer its edge than the other. */
+  inset-inline: 2vw;
+  height: var(--logo-band);
+  display: flex;
+  align-items: center;
+  /* What the Latin mark should measure, unchanged from when it stood here
+     alone. Capped at the master's own height so it is never upscaled into
+     blur - `brand-sizes.css` is generated from the artwork, so larger
+     masters raise the cap by themselves. */
+  --screenmark-h: min(3.5vh, calc(var(--wm-en-h) * 1px));
+  /* ...expressed as the width the shared lockup rules actually take. The
+     aspect comes from the artwork, so this is the same mark at the same
+     size, asked for in the other dimension. */
+  --screenmark-lockup: calc(var(--screenmark-h)
+                            * var(--wm-en-w) / var(--wm-en-h));
+  border: 0;
+  border-radius: 0;
+  background: none;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* The title card's lockup again, at corner size and pushed to the ends of
+   the band - the same rule, the same generated numbers and the same
+   baseline nudge as the poster's header, so a redrawn master moves all
+   three together and none of them can disagree about where the Arabic
+   script sits.
+
+   `dir="ltr"` is on the element in the markup: without it an RTL ancestor
+   would make `space-between` put the Arabic mark at the left end, which is
+   not the lockup.
+
+   The padding is the header's trick, for the header's reason. The two
+   marks stand on one baseline, which means lifting the Arabic one - and
+   because that mark is the taller of the two, lifting it takes the pair's
+   visible block off the centre of the band and crowds the top edge.
+   Padding of P moves centred content down by only P/2, so undoing a lift
+   of N takes 2N. */
+.screenmark .titlecard-lockup {
+  --title-lockup: var(--screenmark-lockup);
+  width: 100%;
+  justify-content: space-between;
+  gap: 0;
+  margin-bottom: 0;
+  padding-top: calc(var(--title-lockup) * var(--wm-ar-nudge) * 2);
+}
+
+/* The whole of what a reconnect is allowed to show on a projector. */
+.linkdot {
+  position: fixed;
+  /* Over everything, the title card included: a projector that has lost the
+     server should say so even while it is showing the card. */
+  z-index: 3;
+  top: 2vh;
+  right: 2vw;
+  width: 0.9vh;
+  height: 0.9vh;
+  border-radius: 50%;
+  background: var(--warn);
+  opacity: 0.65;
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+.linkdot[hidden] { display: none; }
+
+
+/* -- the waiting screen -------------------------------------------------- */
+
+/*
+   What the room looks at before Start and after Stop: the organizer's
+   poster, with the join code on it. The title card it replaces stays for the
+   live-but-silent gap, which is a different thing to say.
+
+   **This is the one surface on /screen that is not flat black**, and that is
+   deliberate rather than an oversight in the "one black" rule two sections
+   up. That rule is about the caption view, where a second near-black is a
+   patch on a calibrated projector and nothing on screen is meant to compete
+   with the words. Here there are no words to compete with: the screen is a
+   poster for as long as nobody is speaking, and it goes away completely the
+   moment there is a caption to show. `tests/test_brand.py` samples the
+   rendered projector *while captions are live* and fails on any colour at
+   all, which is what holds that line.
+
+   Everything is sized `min(<n>vw, <m>vh)` with the two terms equal at 16:9.
+   That is not belt and braces: it means the poster scales as one object from
+   1280x720 to 3840x2160, and that a projector which is not 16:9 shrinks the
+   type rather than running it off the side.
+*/
+
+.waitscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  /* The hairline sits 14% down, which is the header band's height. */
+  grid-template-rows: 14vh 1fr;
+  padding: 0 5vw 6vh;
+  background: var(--bg-brand);
+  font-family: var(--font-display);
+  pointer-events: none;
+  /* Same mechanism as the title card: `visibility` rather than `hidden`,
+     because the global `[hidden]` rule is `display: none !important` and
+     nothing fades out of that. */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 450ms ease, visibility 0s linear 450ms;
+}
+
+.waitscreen.show {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 450ms ease, visibility 0s linear 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waitscreen, .waitscreen.show { transition: none; }
+}
+
+/* The two glows, in one element behind the whole poster so neither can push
+   anything around. Large, soft and low in alpha: at 1080p each is wider than
+   half the screen, which is what keeps them reading as light in the room
+   rather than as a shape someone drew. The warm one sits behind the card
+   and is what makes the white read as lit rather than as a cut-out. */
+.wait-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(58vw 82vh at 2% 26%,
+                    color-mix(in srgb, var(--glow-cool) 20%, transparent),
+                    transparent 66%),
+    radial-gradient(54vw 78vh at 80% 50%,
+                    color-mix(in srgb, var(--glow-warm) 22%, transparent),
+                    transparent 66%);
+}
+
+/* The lockup, then the hairline under it. The line runs the width of the
+   poster's own margins, so the top of the screen is measured by the same
+   5% the columns are. */
+.wait-head {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  /* The global `header` rule pads every header on every page. This one is
+     measured off the poster's own 5% margin, and that padding pushed the
+     lockup in off the ends of the rule it is supposed to line up with. */
+  padding: 0;
+}
+
+/* The title card's lockup at header size, by turning down the one knob it
+   is built on. Everything else about it - the forced direction, the
+   unwrappable row, the Arabic mark's width and its baseline nudge - is the
+   same rule and the same generated numbers, so a new master moves this with
+   it. Capped against the artwork's own width for the same reason the card
+   is: it may be smaller than its pixels, never larger. */
+/* The two marks go to the **ends** of the rule, Latin left and Arabic
+   right, the way the default theme sets them out - not centred as a
+   pair the way the title card does it. The row therefore spans the full
+   width of the header, which is the same width as the rule under it,
+   because both are measured off the poster's 5% margin.
+
+   `dir="ltr"` on the element in the markup is what stops the Arabic mark
+   swapping to the left; `space-between` would otherwise put whichever mark
+   comes first in the writing direction at the left end. */
+.wait-head .titlecard-lockup {
+  --title-lockup: min(13vw, calc(var(--wm-en-w) * 1px * 0.45));
+  width: 100%;
+  justify-content: space-between;
+  gap: 0;
+  margin-bottom: 0;
+  /* Put back exactly what the baseline nudge took.
+
+     The two marks share the Latin baseline, which is what `--wm-ar-nudge`
+     is for - but the Arabic artwork is 2.2x the Latin one's height, so the
+     pair's visible block is the Arabic mark's ink, and lifting it onto the
+     baseline lifts that block off the centre of the band by the same
+     amount. Measured at 1080p: its sparkles sat 33px below the top of the
+     band with 49px under its dots, which reads as the mark crowding the
+     top edge while the Latin one sits comfortably. Adding the nudge back
+     as padding on the row re-centres the block without touching the
+     baseline the two scripts stand on.
+
+     Twice the nudge, because the row still centres its content inside
+     whatever box the padding leaves: padding of P moves centred content
+     down by P/2, so undoing a lift of N takes 2N. Measured after: 41px
+     above the sparkles and 41px below the dots. */
+  padding-top: calc(var(--title-lockup) * var(--wm-ar-nudge) * 2);
+}
+
+.wait-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5vw;
+}
+
+/* Each line owns the space above it and nothing owns space below, so the
+   block's height is the sum of what is in it and the column centres on the
+   real thing rather than on a trailing margin. */
+.wait-copy { max-width: 52vw; }
+.wait-copy > * { margin: 0; }
+
+.wait-eyebrow {
+  font-size: min(1.15vw, 2.05vh);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+  /* The tracking adds a trailing space the eye reads as an indent on a
+     centred line. */
+  text-indent: 0.3em;
+}
+
+/* The one piece of type here meant to be read from the back of a full room.
+   ~104px at 1080p, 69px at 720p, 207px at 4K. Line height under 1 and
+   negative tracking because it is set in a heavy weight at display size,
+   where the default spacing reads as loose. */
+.wait-headline {
+  /* Both of these beat the global `h1` rule, and both are load-bearing.
+     `display: flex` there turned the headline into a flex container, which
+     makes its text and its accent span two flex items - and **the
+     whitespace between flex items is dropped**, so "Captions start
+     shortly." rendered as "Captions startshortly." with only the h1's
+     0.3rem `gap`
+     between them. The font-family there is the chrome face, which quietly
+     meant the display face was never used at all. */
+  display: block;
+  font-family: var(--font-display);
+  font-size: min(5.4vw, 9.6vh);
+  font-weight: 800;
+  line-height: 0.96;
+  letter-spacing: -0.022em;
+  color: var(--fg);
+  margin-top: min(1.6vw, 2.9vh);
+  /* **One line, always.** The design sets the welcome as a single run of
+     type across the left column, and a headline that wraps is a different
+     shape - two short lines leave a hole beside them and stop filling the
+     space up to the card.
+
+     So: `nowrap`, no measure to break against, and a size chosen to fill
+     the column rather than to fit a box. This value is the *largest* it
+     will be - `screen.js` measures the rendered line against the column it
+     is in and scales down from here when an operator types something
+     longer. It never scales up, so a short headline stays this size
+     instead of ballooning.
+
+     Both terms are equal at 16:9, so the line keeps its proportion of the
+     screen from 1280x720 to 4K; a taller aspect ratio takes the `vh` term
+     and the line shrinks rather than running into the card. */
+  white-space: nowrap;
+  font-size: var(--wait-headline, min(5.7vw, 10.1vh));
+}
+
+/* The last word, when the operator leaves "highlight" on. A span rather
+   than a second field: one headline cannot disagree with itself about what
+   its own last word is. */
+.wait-headline .accent { color: var(--accent); }
+
+.wait-sub {
+  margin-top: min(1.9vw, 3.4vh);
+  font-weight: 500;
+  line-height: 1.45;
+  color: #a7a7b0;
+  /* The column, not a measure of its own. The subline used to stop at
+     41vw, which with a headline that also stopped short left a wide dead
+     strip between the text and the card; the left column now runs the
+     whole way up to the gap. */
+  max-width: 100%;
+  /* **The break is typed, not computed.** Two lines, broken where the
+     operator put the newline - after "think," in the design - and each one
+     held on one line the same way the headline is.
+
+     This replaced `text-wrap: balance`. Balance evened the two lines out
+     and that was better than the natural break, which left "next." alone
+     on line two; but where it broke still moved with the words, the
+     viewport and the face, and the design breaks the sentence in one
+     particular place. A newline in the operator's field is a `<br>` here -
+     `paintSubline` in `screen.js` - and `nowrap` then means each half
+     shrinks rather than wrapping, so the typed break is the only break.
+
+     Same contract as the headline: this size is the *largest* it may be,
+     and `screen.js` measures the widest of the two lines against the
+     column and scales down from here. Never up. */
+  white-space: nowrap;
+  font-size: var(--wait-sub, min(1.55vw, 2.75vh));
+}
+
+
+
+/* -- the join card ------------------------------------------------------- */
+
+.wait-join {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* White, because a QR code is black on white or it is not a QR code. The
+   glow around it is the warm one from the background brought in close, so
+   the card looks lit by the same light as the rest of the poster instead of
+   pasted on top of it. */
+.wait-card {
+  position: relative;
+  /* Bigger than it was, and holding a code that fills nearly all of it.
+     What decides whether a phone across a room can read the code is how
+     many of its pixels each module gets, so every millimetre of card that
+     is not padding is margin on that. The code brings its own four-module
+     quiet zone, so the padding here is breathing room rather than the
+     white border the code needs - which is what lets it be this small. */
+  width: min(27vw, 48vh);
+  padding: min(0.9vw, 1.6vh);
+  border-radius: min(1.9vw, 3.4vh);
+  background: #ffffff;
+  /* The glow is the card's own light, and it is meant to be seen: three
+     stops rather than one, so it is bright against the card's edge and
+     still reaching a good part of the way across the poster. It takes the
+     warm glow token, so theming the accent lights the card in the same
+     colour as the wash behind it rather than leaving a stray hue here.
+     Under it, a plain drop shadow to seat the card on the background -
+     without it the white floats on the wash rather than sitting in front
+     of it. */
+  box-shadow:
+    0 0 min(2.4vw, 4.3vh)
+      color-mix(in srgb, var(--glow-warm) 55%, transparent),
+    0 0 min(6vw, 10.7vh)
+      color-mix(in srgb, var(--glow-warm) 42%, transparent),
+    0 0 min(13vw, 23vh)
+      color-mix(in srgb, var(--glow-warm) 26%, transparent),
+    0 min(0.6vw, 1.1vh) min(2vw, 3.6vh) rgba(0, 0, 0, 0.55);
+}
+
+/* The inner frame - the second, thinner edge inside the card that gives the
+   design its double outline. A wrapper rather than a border on the image,
+   so the white margin between the frame and the code stays white at every
+   size and the code never touches the line. */
+.wait-frame {
+  border: 1px solid #d8d8dd;
+  border-radius: min(1.1vw, 2vh);
+  padding: min(0.9vw, 1.6vh);
+}
+
+/* Sits across the card's top edge, half on and half off. `translate(-50%,
+   -50%)` from the card's own top centre, so it stays on the edge at every
+   size rather than at one. */
+.wait-pill {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: min(0.5vw, 0.9vh) min(1.5vw, 2.7vh);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: min(0.92vw, 1.64vh);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-indent: 0.2em;
+  white-space: nowrap;
+}
+
+/* The code fills the frame, and it carries its own quiet zone - four
+   modules of white - so the padding around it is margin on top of that
+   rather than the whole of it. The width is forced because the organizer's
+   own file declares a physical size (41mm), which an `<img>` would
+   otherwise honour and draw at about 155px on any screen. */
+.wait-qr {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+/* A code that failed to load leaves white, not a broken-image icon. */
+.wait-qr.missing { visibility: hidden; }
+
+.wait-cta {
+  margin: min(1.7vw, 3vh) 0 0;
+  font-size: min(1.65vw, 2.93vh);
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.wait-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6em;
+  margin: min(0.6vw, 1.1vh) 0 0;
+  font-size: min(1.05vw, 1.87vh);
+  font-weight: 500;
+  color: #9a9aa4;
+}
+
+.wait-dot {
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: var(--teal);
+  flex: none;
+}
+
+
+/* -- operator page ----------------------------------------------------- */
+/*
+   Laid out to be read from a few steps away during a talk. The top bar is
+   sticky and carries the only four things that matter mid-session: what the
+   state is, how long it has run, who is watching, and the two buttons. The
+   rest is reference material and lives below.
+*/
+
+body.admin {
+  display: block;
+  overflow: auto;
+  font-size: 15px;
+  padding: 0 0 3rem;
+}
+
+body.admin .wrap {
+  padding: 0 1.25rem;
+  margin: 0 auto;
+  max-width: 108rem;
+}
+
+/* -- sticky top bar ----------------------------------------------------- */
+
+body.admin .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1.25rem;
+  margin-bottom: 1rem;
+  background: #111116;
+  border-bottom: 1px solid var(--line);
+}
+
+body.admin .brandmark { --mark: 2.1rem; }
+
+body.admin .topbar h1 {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--dim);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+/* The pill is the one thing meant to be legible across a room. */
+body.admin .pill {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.3rem 1.1rem;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+body.admin .pill.live {
+  background: #881337;
+  border-color: var(--bad);
+  color: #fff;
+  /* A slow pulse, not a flash: visible in peripheral vision, not annoying
+     to sit beside for an hour. */
+  animation: adminpulse 2.4s ease-in-out infinite;
+}
+
+body.admin .pill.replay { border-color: var(--accent); color: var(--accent); }
+body.admin .pill.audio { border-color: #a78bfa; color: #a78bfa; }
+body.admin .pill.paused { border-color: var(--warn); color: var(--warn); }
+body.admin .pill.stopped { border-color: var(--line); color: var(--dim); }
+
+@keyframes adminpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.5); }
+  50% { box-shadow: 0 0 0 0.5rem rgba(248, 113, 113, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.admin .pill.live { animation: none; }
+}
+
+body.admin .topstats {
+  display: flex;
+  gap: 1.5rem;
+  flex: 1 1 auto;
+}
+
+body.admin .topstat { display: flex; flex-direction: column; line-height: 1.15; }
+body.admin .topstat b {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The audio stat is the only one of the four that can be *wrong* rather
+   than merely a number, so it is the only one that takes a colour. Amber
+   rather than red: a talk nobody is recording is a choice the operator is
+   allowed to make, and the point is to be certain which choice is in
+   effect, not to nag. */
+body.admin .topstat b.ok { color: var(--ok); }
+body.admin .topstat b.warn { color: var(--warn); }
+body.admin .topstat span {
+  font-size: 0.68rem;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+body.admin .topactions { display: flex; gap: 0.5rem; }
+
+/* -- the grid ----------------------------------------------------------- */
+
+body.admin .grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+
+/* One column on a phone, two from tablet width, and a wider left column on
+   a desk monitor so the forms are not cramped next to the status tables. */
+@media (min-width: 60rem) {
+  body.admin .grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+}
+
+@media (min-width: 100rem) {
+  body.admin .grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+}
+
+body.admin .col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+
+/* -- cards -------------------------------------------------------------- */
+
+body.admin .card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #121217;
+  padding: 0.9rem 1.1rem 1.1rem;
+}
+
+body.admin .card > h2 {
+  font-family: var(--font-brand);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  margin: 0 0 0.7rem;
+}
+
+/* A second group inside one card, for a card that has grown two jobs: the
+   live projector controls, and the poster the room sees between talks. A
+   rule above it rather than a second card, because they are one surface and
+   the operator sets them minutes apart. */
+body.admin .card > h3 {
+  font-family: var(--font-brand);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  margin: 1.3rem 0 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+/* A control the server has taken out of play - the invite link while the
+   organizer's own QR file is the one on screen. Dimmed rather than removed:
+   what is saved there is still saved, and it comes back the moment the file
+   is taken away. */
+body.admin .row.disabled { opacity: 0.45; }
+body.admin input:disabled { cursor: not-allowed; }
+
+body.admin .card.danger { border-color: var(--bad); }
+body.admin .card.attention { border-color: var(--warn); }
+
+/* What the screens say they are showing. Red is load-bearing here: this line
+   exists because a projector showing the wrong stream looked exactly like a
+   projector showing the right one, and the operator has one glance to spare
+   during a talk. The accent is not used - it means "live and well" all over
+   this project - and white on `--bad-strong` is the only pairing here that
+   reads as an alarm rather than as another label. */
+body.admin .health {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+
+body.admin .health.ok { color: var(--ok); border-color: var(--ok); }
+
+body.admin .health.bad {
+  background: var(--bad-strong);
+  border-color: var(--bad-strong);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* -- controls ----------------------------------------------------------- */
+
+body.admin label { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+body.admin select,
+body.admin button,
+body.admin input[type="number"],
+body.admin input[type="text"],
+body.admin input[type="url"],
+body.admin textarea {
+  font: inherit;
+  color: var(--fg);
+  background: #16161b;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+  min-height: 2.2rem;
+  /* A long device name used to push the select past the edge of its card on
+     a phone. Nothing here may be wider than what contains it. */
+  max-width: 100%;
+}
+
+body.admin input[type="number"] { width: 4.5rem; }
+body.admin textarea { resize: vertical; min-height: 3.6rem; }
+body.admin input[type="text"],
+body.admin input[type="url"],
+body.admin textarea { width: 100%; }
+
+body.admin button { cursor: pointer; font-weight: 600; white-space: nowrap; }
+body.admin button:disabled { opacity: 0.4; cursor: default; }
+
+body.admin button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* The live start is a different colour from every other button on the page,
+   because it is the only one that spends money. */
+body.admin button.spend {
+  background: var(--bad-strong);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+body.admin button.ghost { background: transparent; }
+
+body.admin .row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+/* `!important` on purpose. `.applybar` and `.confirm` set `display: flex`
+   and are declared later with equal specificity, so without it a hidden bar
+   stays on screen - which is how the "apply now" bar and the live-run confirm
+   both showed in a stopped session. A visibility utility has to beat layout. */
+body.admin [hidden] { display: none !important; }
+body.admin .row + .row { margin-top: 0.6rem; }
+body.admin code { font-size: 0.9em; color: var(--dim); }
+
+body.admin label.wide {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  flex: 1 1 14rem;
+  color: var(--dim);
+  font-size: 0.78rem;
+}
+
+body.admin .note {
+  color: var(--dim);
+  font-size: 0.8rem;
+  margin: 0.55rem 0 0;
+  line-height: 1.45;
+}
+
+body.admin .warn { color: var(--warn); font-weight: 600; }
+body.admin .pending { color: var(--warn); font-weight: 700; }
+body.admin .saved { color: var(--ok); }
+body.admin .error { color: var(--bad); }
+
+/* -- banners ------------------------------------------------------------ */
+
+body.admin .banner {
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin: 0 0 1rem;
+  font-weight: 600;
+}
+
+body.admin .banner.page { color: var(--bad); border: 1px solid var(--bad); }
+body.admin .banner.engine { background: #881337; color: #fff; }
+
+/* The advice sits on its own line under the error, not trailing off the end
+   of it: it is a separate thought, and the one an operator can act on. */
+body.admin #error-advice {
+  display: block;
+  font-weight: 400;
+  margin-top: 0.15rem;
+}
+
+body.admin #error-advice[hidden] { display: none !important; }
+
+/* The "saved but not applied" state during a live run. It has to be
+   impossible to walk past. */
+body.admin .applybar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: #3f2d06;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-top: 0.75rem;
+}
+
+body.admin .applybar b { color: var(--warn); }
+
+/* The idle pause. Amber like the apply bar and not red like an error,
+   because nothing has gone wrong and nothing has been lost - but it holds a
+   button, so it is laid out like the apply bar rather than like a banner. */
+body.admin .pausebar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: #3f2d06;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin: 0 0 1rem;
+}
+
+body.admin .pausebar b { color: var(--warn); font-weight: 600; }
+
+body.admin .pausebar[hidden] { display: none !important; }
+
+body.admin .confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  background: #4c0519;
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-top: 0.6rem;
+}
+
+/* -- level meter -------------------------------------------------------- */
+
+body.admin .meterwrap { margin-bottom: 1rem; }
+
+body.admin .meter {
+  position: relative;
+  height: 3rem;
+  background: #16161b;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.admin .meter-fill {
+  height: 100%;
+  width: 0;
+  /* Hard stops aligned to the marks drawn on the bar: green all the way
+     through the good band (which ends at 66.7%), amber in the gap between
+     the band and the clip zone, red once inside it (91.7%). The colour of
+     the bar's end is then the answer on its own, without reading a number. */
+  background: linear-gradient(90deg,
+    var(--ok) 0%, var(--ok) 66.7%,
+    var(--warn) 66.7%, var(--warn) 91.7%,
+    var(--bad) 91.7%, var(--bad) 100%);
+  /* `background-size` is set from JavaScript to the inverse of the fill
+     fraction, so the gradient always spans the whole track rather than being
+     squeezed into whatever width the fill currently has. Without that, the
+     colour at the end of the bar would depend on the level twice over. */
+  background-repeat: no-repeat;
+  transition: width 120ms linear;
+}
+
+body.admin .meter-fill.hot { background: var(--bad); }
+
+/* The good-speech band, drawn behind the fill so the operator can aim for
+   it rather than remember a number. */
+body.admin .meter-band {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 16.7%;
+  background: rgba(74, 222, 128, 0.12);
+  border-left: 1px solid rgba(74, 222, 128, 0.5);
+  border-right: 1px solid rgba(74, 222, 128, 0.5);
+  pointer-events: none;
+}
+
+body.admin .meter-clipzone {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 91.7%;
+  right: 0;
+  background: rgba(248, 113, 113, 0.14);
+  border-left: 1px solid rgba(248, 113, 113, 0.6);
+  pointer-events: none;
+}
+
+body.admin .meter-label {
+  position: absolute;
+  z-index: 3;
+  font-weight: 700;
+  /* A dark chip, not just a text shadow: these labels sit wherever the fill
+     happens to reach, and green-on-green was unreadable exactly when the
+     level was in the band the label is pointing at. */
+  background: rgba(0, 0, 0, 0.62);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  top: 0.25rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+body.admin .meter-label.good { left: 51%; color: var(--ok); }
+body.admin .meter-label.clip { left: 92.7%; color: var(--bad); }
+
+/* Phone width. Two things change: the meter labels drop out (the coloured
+   bands still say where to aim), and every label moves above its field
+   instead of beside it - side by side, "What to run" wrapped onto three
+   lines and left the select a sliver. */
+@media (max-width: 34rem) {
+  body.admin .meter-label { display: none; }
+  body.admin .meter { height: 2.2rem; }
+
+  body.admin .row { gap: 0.8rem; }
+
+  body.admin .row > label {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    flex: 1 1 100%;
+    color: var(--dim);
+    font-size: 0.78rem;
+  }
+
+  /* ...except a checkbox, where the label *is* the sentence and belongs
+     beside the box. */
+  body.admin .row > label:has(input[type="checkbox"]) {
+    flex-direction: row;
+    align-items: center;
+    color: inherit;
+    font-size: inherit;
+  }
+
+  body.admin .row > label > select,
+  body.admin .row > label > input[type="text"],
+  body.admin .row > label > input[type="url"],
+  body.admin .row > label > input[type="number"] {
+    width: 100%;
+  }
+
+  body.admin .topbar { gap: 0.75rem 1rem; }
+  body.admin .topstats { gap: 1rem; }
+}
+
+body.admin .meterline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  margin-top: 0.4rem;
+}
+
+body.admin .meterline b { font-variant-numeric: tabular-nums; font-size: 1rem; }
+
+body.admin .clip {
+  color: #fff;
+  background: var(--bad-strong);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+}
+
+/* -- status tables ------------------------------------------------------ */
+
+body.admin table { border-collapse: collapse; width: 100%; }
+
+body.admin th, body.admin td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+body.admin th { color: var(--dim); font-weight: 500; width: 11rem; }
+
+body.admin tr.group th {
+  color: var(--fg);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding-top: 0.8rem;
+  border-bottom-color: transparent;
+}
+
+body.admin .stale {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.5rem;
+}
+
+/* -- spend -------------------------------------------------------------- */
+
+body.admin .spendline {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+body.admin .spendfig { display: flex; flex-direction: column; }
+body.admin .spendfig b { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+body.admin .spendfig span {
+  font-size: 0.68rem;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+body.admin .spendbar {
+  height: 0.5rem;
+  background: #16161b;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 0.5rem 0 0.2rem;
+}
+
+body.admin .spendbar div { height: 100%; width: 0; background: var(--accent); }
+body.admin .spendbar div.low { background: var(--warn); }
+body.admin .spendbar div.out { background: var(--bad); }
+
+
+/* -- transcripts ---------------------------------------------------------
+   One block per saved session: the date, what is in it, the download links
+   and a delete button. Operator page only - these files never reach a
+   viewer, and nothing on `/screen` or the audience page knows they exist. */
+
+body.admin .transcript {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.5rem;
+  background: #14141a;
+}
+
+body.admin .transcript-head { margin: 0 0 0.35rem; }
+body.admin .transcript-head b { font-variant-numeric: tabular-nums; }
+
+body.admin .transcript-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+}
+
+body.admin .transcript-links a { color: var(--accent); }
+body.admin .transcript-links a.strong { font-weight: 600; }
+
+/* The two-click delete: the second state has to look different from the
+   first, or an operator cannot tell an armed button from a fresh one. */
+body.admin button.ghost.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}

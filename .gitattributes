@@ -1,0 +1,9 @@
+# Line endings are decided here, not by each contributor's core.autocrlf.
+# Git normalises to LF in the repository; checkouts get the platform's own.
+# Without this, a Windows clone with autocrlf unset commits CRLF and every
+# later diff is the whole file.
+* text=auto eol=lf
+
+# Nothing here is binary today, but brand artwork lands in a gitignored
+# directory and captures are JSONL, so this is the shape to extend if that
+# ever changes.
