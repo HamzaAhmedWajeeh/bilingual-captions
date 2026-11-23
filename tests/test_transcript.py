@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import wave
 import zipfile
 from pathlib import Path
@@ -56,6 +57,7 @@ from app.main import (  # noqa: E402
 )
 from app.replay import responses  # noqa: E402
 from app.settings import settings  # noqa: E402
+from audio import write_tone  # noqa: E402
 from test_soniox_client import CHUNK_MS, FakeServer  # noqa: E402
 from app.transcript import (  # noqa: E402
     ARABIC,
@@ -763,17 +765,33 @@ async def test_the_paragraphs_so_far_are_on_disk_before_the_end(
     headers, no stats - and what was appended as it went has to still be
     readable. That is the difference between flushing per paragraph and
     holding the whole thing in memory until the end.
+
+    **Both halves need the run to still be going when the test looks.** The
+    header says "Still running" only until `finalize`, and there is no task to
+    cancel once the session has ended. With `realtime=False` the whole file
+    went through in milliseconds, so on Linux and macOS the run had already
+    finished by the first look and the header read `Duration: 0s` (2026-11-23).
+    Paced audio, five seconds of it, and a deadline rather than a count of
+    sleeps: the run is certainly still in flight, and a slow runner waits
+    longer instead of giving up early.
     """
     fake = BilingualServer()
-    source = FileSource(tone, realtime=False)
+    source = FileSource(
+        write_tone(tone.parent / "unfinished.wav", seconds=5), realtime=True)
     await fresh_session.start_live(source, connect=fake, api_key="test-key")
-    for _ in range(400):
+    folder = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
         await asyncio.sleep(0.005)
         folder = (sorted(transcripts.iterdir()) or [None])[0]
         if folder is not None and paragraphs_of(folder / ENGLISH):
             break
     else:
         pytest.fail("nothing reached disk while the session was running")
+
+    assert fresh_session.running, (
+        "the session ended before the test could look at it, so the "
+        "unfinished-transcript assertions below would prove nothing")
 
     written = paragraphs_of(folder / ENGLISH)
     assert written, "english.md had a header and no speech"

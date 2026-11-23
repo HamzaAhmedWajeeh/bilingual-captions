@@ -1,0 +1,67 @@
+# The offline test suite, on the three platforms someone might clone this on.
+#
+# It needs no API key and no secrets: the capture, browser, Pillow, zxing and
+# ADMIN_TOKEN tests all skip themselves when what they need is absent, which is
+# the same thing that happens on a fresh clone. Nothing here reaches Soniox.
+#
+# Live audio is only tested on Windows, by hand, in front of a mixer. What this
+# proves on macOS and Linux is that the server, the caption pipeline and the
+# pages are sound there, not that a microphone opens.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      # Every platform's answer is wanted, not just the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, python: '3.12'}
+          - {os: macos-latest, python: '3.12'}
+          - {os: ubuntu-latest, python: '3.12'}
+          # The newest supported version, where running it is cheapest.
+          # No 3.11 job: `requires-python` is >=3.12 and the comment there
+          # says why, at length.
+          - {os: ubuntu-latest, python: '3.13'}
+
+    steps:
+      # Several tests ask git what it tracks and what it ignores, so the
+      # checkout has to be a real repository rather than an export.
+      - uses: actions/checkout@v5
+
+      # `sounddevice` imports PortAudio lazily, so the suite passes without
+      # this. Installed anyway: a job that cannot import the audio module is
+      # not the platform check it looks like.
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      # `--timeout` is permanent: a hung test fails in a minute and names
+      # itself, rather than taking the job down at the 15 minute cap with
+      # nothing to show but a progress bar stopped at 42%. No test in this
+      # suite takes anywhere near 60 s; the whole run is about 70 s.
+      #
+      # `faulthandler_timeout` is the backstop for a hang that pytest-timeout
+      # cannot interrupt, because it dumps every thread rather than the one
+      # being watched. It has to be the larger number of the two.
+      - name: Test
+        run: uv run pytest -q --timeout=60 -o faulthandler_timeout=75

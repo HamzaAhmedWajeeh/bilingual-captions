@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import wave
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from test_soniox_client import (  # noqa: E402
     FakeServer,
     FakeSocket,
 )
+from audio import write_tone  # noqa: E402
 from captures import needs_captures  # noqa: E402
 
 TOKEN = "s3cret-operator-token"
@@ -477,19 +479,34 @@ async def test_the_engine_state_reaches_the_pages_without_clearing_live(
     `live` is the operator's flag; `status` is the engine's. A page that went
     grey on every blink would look broken during the one event this project
     exists to survive.
+
+    **The audio has to outlive the reconnect.** `recordings` makes half a
+    second of tone and `soniox_client.BACKOFF_BASE` is 0.5 s, so on a runner
+    that schedules the drop promptly the source ran out before the second
+    connection arrived: the run ended on its own and `live` was cleared by the
+    end of the talk rather than by a drop. That failed on Linux and macOS and
+    passed on Windows (2026-11-23). Five seconds of audio makes the window a
+    fact rather than a race, and the wait below is a deadline rather than a
+    count of sleeps, so a slow runner waits longer instead of giving up early.
     """
     monkeypatch.setattr(settings, "soniox_api_key", "test-key")
     server = DropsOnce(after=2)
-    source = FileSource(recordings / "tone.wav", realtime=True)
+    source = FileSource(
+        write_tone(recordings / "reconnect.wav", seconds=5), realtime=True)
 
     await fresh_session.start_live(source, connect=server, api_key="test-key")
     seen = set()
-    for _ in range(200):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
         await asyncio.sleep(0.01)
         seen.add(fresh_session.state.status)
         assert fresh_session.state.live is True, "live was cleared by a drop"
         if server.connections >= 2 and fresh_session.state.status == "live":
             break
+    else:
+        pytest.fail(
+            "no reconnect inside 20 s: the engine reached "
+            f"{server.connections} connection(s) and status {seen}")
     await admin_stop(token=TOKEN)
 
     assert "reconnecting" in seen, f"pages never saw a reconnect: {seen}"
@@ -591,16 +608,7 @@ async def test_a_long_outage_puts_a_notice_on_the_page(
 
     # Three seconds of audio and an outage that outlives the replay window,
     # so the drop is a certainty rather than a race.
-    long_tone = recordings / "long.wav"
-    samples = np.rint(
-        np.sin(2 * np.pi * 440 * np.arange(SAMPLE_RATE * 3) / SAMPLE_RATE)
-        * 0.5 * 32767
-    ).astype(np.int16)
-    with wave.open(str(long_tone), "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
-        wav.writeframes(samples.tobytes())
+    long_tone = write_tone(recordings / "long.wav", seconds=3)
 
     server = OutageOfLength(after=3, outage_chunks=12)
     source = FileSource(long_tone, realtime=True)

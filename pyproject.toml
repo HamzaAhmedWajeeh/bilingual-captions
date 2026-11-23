@@ -2,7 +2,15 @@
 name = "bilingual-captions"
 version = "0.1.0"
 description = "Two-way live Arabic/English captions for a venue screen"
-requires-python = ">=3.11"
+# 3.11 is excluded deliberately, not for want of trying it. On 3.11
+# `asyncio.wait_for` wraps its awaitable in a separate task and cancels it
+# by hand, so a cancellation arriving during another one is lost:
+# `soniox_client._sender` never finishes, `close()` never returns, and
+# Stop hangs the server. Reconnection stops working for the same reason -
+# 14 tests fail there, all one family. 3.12 reimplemented `wait_for` on
+# `asyncio.timeout`, which re-cancels correctly. Measured 2026-11-23 on
+# Windows and Linux alike; see the CI matrix.
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -20,6 +28,11 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # A hung test has to name itself. Without this, the 2026-11-23 CI run sat
+    # at 42% for fifteen minutes on Python 3.11 and was killed by the job cap,
+    # which says nothing about which test it was. `--timeout` fails the test
+    # instead, and prints the stack it was stuck in.
+    "pytest-timeout>=2.3",
 ]
 
 [tool.pytest.ini_options]
