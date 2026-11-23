@@ -1,0 +1,58 @@
+# The offline test suite, on the three platforms someone might clone this on.
+#
+# It needs no API key and no secrets: the capture, browser, Pillow, zxing and
+# ADMIN_TOKEN tests all skip themselves when what they need is absent, which is
+# the same thing that happens on a fresh clone. Nothing here reaches Soniox.
+#
+# Live audio is only tested on Windows, by hand, in front of a mixer. What this
+# proves on macOS and Linux is that the server, the caption pipeline and the
+# pages are sound there, not that a microphone opens.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      # Every platform's answer is wanted, not just the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, python: '3.12'}
+          - {os: macos-latest, python: '3.12'}
+          - {os: ubuntu-latest, python: '3.12'}
+          # The supported edges, where running them is cheapest.
+          - {os: ubuntu-latest, python: '3.11'}
+          - {os: ubuntu-latest, python: '3.13'}
+
+    steps:
+      # Several tests ask git what it tracks and what it ignores, so the
+      # checkout has to be a real repository rather than an export.
+      - uses: actions/checkout@v5
+
+      # `sounddevice` imports PortAudio lazily, so the suite passes without
+      # this. Installed anyway: a job that cannot import the audio module is
+      # not the platform check it looks like.
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      - name: Test
+        run: uv run pytest -q
