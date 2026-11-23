@@ -9,7 +9,7 @@ it will differ.
 
 ## 1. Python and dependencies
 
-Python **3.11 or newer**, plus uv:
+Python **3.12 or newer**, plus uv:
 
 - Windows: `winget install astral-sh.uv`
 - macOS: `brew install uv`

@@ -30,8 +30,9 @@ jobs:
           - {os: windows-latest, python: '3.12'}
           - {os: macos-latest, python: '3.12'}
           - {os: ubuntu-latest, python: '3.12'}
-          # The supported edges, where running them is cheapest.
-          - {os: ubuntu-latest, python: '3.11'}
+          # The newest supported version, where running it is cheapest.
+          # No 3.11 job: `requires-python` is >=3.12 and the comment there
+          # says why, at length.
           - {os: ubuntu-latest, python: '3.13'}
 
     steps:

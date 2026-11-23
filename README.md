@@ -25,7 +25,7 @@ you need an API key. Everything else runs on your machine.
 
 ## Quick start
 
-Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). On Linux, install
+Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Linux, install
 PortAudio first: `sudo apt-get install libportaudio2`.
 
 ```sh
