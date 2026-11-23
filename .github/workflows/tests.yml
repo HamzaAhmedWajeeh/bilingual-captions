@@ -54,5 +54,13 @@ jobs:
       - name: Install
         run: uv sync --extra dev --python ${{ matrix.python }}
 
+      # `--timeout` is permanent: a hung test fails in a minute and names
+      # itself, rather than taking the job down at the 15 minute cap with
+      # nothing to show but a progress bar stopped at 42%. No test in this
+      # suite takes anywhere near 60 s; the whole run is about 70 s.
+      #
+      # `faulthandler_timeout` is the backstop for a hang that pytest-timeout
+      # cannot interrupt, because it dumps every thread rather than the one
+      # being watched. It has to be the larger number of the two.
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q --timeout=60 -o faulthandler_timeout=75

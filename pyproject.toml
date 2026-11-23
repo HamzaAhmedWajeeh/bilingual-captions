@@ -20,6 +20,11 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # A hung test has to name itself. Without this, the 2026-11-23 CI run sat
+    # at 42% for fifteen minutes on Python 3.11 and was killed by the job cap,
+    # which says nothing about which test it was. `--timeout` fails the test
+    # instead, and prints the stack it was stuck in.
+    "pytest-timeout>=2.3",
 ]
 
 [tool.pytest.ini_options]
