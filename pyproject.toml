@@ -1,6 +1,6 @@
 [project]
 name = "bilingual-captions"
-version = "0.1.0"
+version = "1.0.0"
 description = "Two-way live Arabic/English captions for a venue screen"
 # 3.11 is excluded deliberately, not for want of trying it. On 3.11
 # `asyncio.wait_for` wraps its awaitable in a separate task and cancels it
